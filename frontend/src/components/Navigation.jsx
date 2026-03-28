@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Search, BookOpen, Swords, Newspaper,
   LogOut, HelpCircle, ListOrdered, User, Wallet, Bell
 } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 
 const sidebarLinks = [
   { path: '/', name: 'The Pavilion', icon: LayoutDashboard },
@@ -25,6 +26,12 @@ const mobileLinks = [
 export default function Navigation() {
   const location = useLocation();
   const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    localStorage.removeItem('sb-auth-token');
+    navigate('/auth');
+  };
 
   return (
     <>
@@ -96,7 +103,10 @@ export default function Navigation() {
           <NavLink to="/help" className="flex items-center gap-3 px-4 py-2 font-bold uppercase text-xs text-[#65655f] hover:text-black transition-colors">
             <HelpCircle size={16} /> Help
           </NavLink>
-          <button className="flex items-center gap-3 px-4 py-2 font-bold uppercase text-xs text-[#be2d06] hover:text-black transition-colors w-full text-left">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 px-4 py-2 font-bold uppercase text-xs text-[#be2d06] hover:text-black transition-colors w-full text-left cursor-pointer"
+          >
             <LogOut size={16} /> Logout
           </button>
         </div>
@@ -137,6 +147,13 @@ export default function Navigation() {
             className={`border-4 border-black p-2 shadow-[3px_3px_0px_0px_#000] cursor-pointer ${location.pathname === '/profile' ? 'bg-[#b6353a] text-white' : 'bg-[#fefcf4]'}`}
           >
             <User size={16} />
+          </button>
+          <button
+            onClick={handleLogout}
+            title="Log Out"
+            className="bg-[#fefcf4] border-4 border-black p-2 shadow-[3px_3px_0px_0px_#000] cursor-pointer hover:bg-[#be2d06] hover:text-white transition-colors"
+          >
+            <LogOut size={16} />
           </button>
         </div>
       </header>

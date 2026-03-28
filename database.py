@@ -18,15 +18,29 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 security = HTTPBearer(auto_error=False)
 
-class MockUser:
-    def __init__(self, user_id: str):
-        self.id = user_id
-
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """
-    TEMPORARY AUTH BYPASS
-    Automatically returns an authenticated MockUser object with the MVP_USER_ID
-    to allow the frontend features to be built and tested without a real JWT.
+    Validate the Supabase JWT access token to get the real user's ID.
+    Replaces the previous mock implementation.
     """
-    # The MVP_USER_ID we previously populated the database with
-    return MockUser(user_id="00000000-0000-0000-0000-000000000001")
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    token = credentials.credentials
+    try:
+        # Verify token with Supabase Auth
+        user_resp = supabase.auth.get_user(token)
+        if hasattr(user_resp, 'user') and user_resp.user:
+            return user_resp.user
+            
+        raise Exception("Invalid token structure from Supabase")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Could not validate credentials: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )

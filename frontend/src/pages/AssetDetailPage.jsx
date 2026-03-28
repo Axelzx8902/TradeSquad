@@ -1,33 +1,48 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Users, BarChart3 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Users } from 'lucide-react';
 import CoachAlert from '../components/CoachAlert';
-import { buyAsset } from '../api';
-
-const ASSET_DATA = {
-  'RELIANCE': { name: 'Reliance Industries', ticker: 'RELIANCE', price: 2950.45, change: 1.2, marketCap: '₹19.8L Cr', peRatio: '28.4x', volume: '12.4M', status: 'MARKET OPEN', squadHolding: 42 },
-  'TCS': { name: 'TCS', ticker: 'TCS', price: 3912.15, change: 0.8, marketCap: '₹14.2L Cr', peRatio: '32.1x', volume: '8.2M', status: 'MARKET OPEN', squadHolding: 38 },
-  'HDFCBANK': { name: 'HDFC Bank', ticker: 'HDFCBANK', price: 1442.20, change: 0.4, marketCap: '₹11.0L Cr', peRatio: '19.5x', volume: '15.7M', status: 'MARKET OPEN', squadHolding: 55 },
-  'INFY': { name: 'Infosys', ticker: 'INFY', price: 1675.00, change: 1.6, marketCap: '₹7.0L Cr', peRatio: '25.8x', volume: '9.1M', status: 'MARKET OPEN', squadHolding: 29 },
-};
+import { buyAsset, sellAsset, fetchAssetByTicker } from '../api';
+import useUserStore from '../store/userStore';
 
 const TIME_PERIODS = ['1D', '1W', '1M', '3M', '1Y', 'ALL'];
 
 export default function AssetDetailPage() {
   const { ticker } = useParams();
   const navigate = useNavigate();
-  const asset = ASSET_DATA[ticker] || ASSET_DATA['RELIANCE'];
-
+  const { updateBalance } = useUserStore();
+  
+  const [asset, setAsset] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState('1M');
   const [quantity, setQuantity] = useState(1);
   const [coachAlert, setCoachAlert] = useState(null);
   const [squadRole, setSquadRole] = useState('');
 
-  const isPositive = asset.change >= 0;
+  useEffect(() => {
+    const getAsset = async () => {
+      setLoading(true);
+      try {
+        const data = await fetchAssetByTicker(ticker);
+        setAsset(data);
+      } catch (err) {
+        setCoachAlert({
+          title: 'Umpire Disagrees',
+          message: 'Could not fetch asset details. It may be delisted or invalid.'
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (ticker) {
+      getAsset();
+    }
+  }, [ticker]);
 
   const handleBuy = async () => {
     try {
-      await buyAsset(asset.ticker, quantity);
+      const res = await buyAsset(ticker, quantity);
+      if (res.new_balance) updateBalance(res.new_balance);
       navigate('/');
     } catch (err) {
       setCoachAlert({
@@ -37,8 +52,40 @@ export default function AssetDetailPage() {
     }
   };
 
+  const handleSell = async () => {
+    try {
+      const res = await sellAsset(ticker, quantity);
+      if (res.new_balance) updateBalance(res.new_balance);
+      navigate('/');
+    } catch (err) {
+      setCoachAlert({
+        title: 'Trade Failed',
+        message: err.response?.data?.detail || 'You do not own enough of this asset or server error.'
+      });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen bg-[#fefcf4] flex items-center justify-center">
+        <h2 className="text-3xl font-black uppercase tracking-tight animate-pulse">Scouting Player...</h2>
+      </div>
+    );
+  }
+
+  if (!asset) {
+    return (
+      <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen bg-[#fefcf4] flex items-center justify-center flex-col gap-4">
+        {coachAlert && <CoachAlert title={coachAlert.title} message={coachAlert.message} onDismiss={() => navigate('/')} />}
+        <button onClick={() => navigate(-1)} className="bg-white border-4 border-black font-black uppercase text-sm px-4 py-2 shadow-[4px_4px_0px_0px_#000]">← Back</button>
+      </div>
+    );
+  }
+
+  const isPositive = asset.change >= 0;
+
   return (
-    <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen">
+    <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen bg-[#fefcf4]">
       {coachAlert && <CoachAlert title={coachAlert.title} message={coachAlert.message} onDismiss={() => setCoachAlert(null)} />}
 
       {/* Back + Header */}
@@ -48,7 +95,7 @@ export default function AssetDetailPage() {
 
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 gap-4">
         <div>
-          <p className="text-xs font-bold uppercase text-[#65655f] tracking-widest">NSE: {asset.ticker} | {asset.status}</p>
+          <p className="text-xs font-bold uppercase text-[#65655f] tracking-widest">NSE: {ticker} | {asset.status}</p>
           <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tighter">{asset.name}</h1>
         </div>
         <div className="text-right">
@@ -141,7 +188,7 @@ export default function AssetDetailPage() {
           <button onClick={handleBuy} className="flex-1 bg-[#b6353a] text-white border-4 border-black font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] hover:shadow-[8px_8px_0px_0px_#000] hover:-translate-y-1 active:shadow-none active:translate-y-1 transition-all cursor-pointer">
             Buy Asset
           </button>
-          <button className="flex-1 bg-white border-4 border-black font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] active:shadow-none active:translate-y-1 transition-all cursor-pointer text-[#65655f]">
+          <button onClick={handleSell} className="flex-1 bg-white border-4 border-black font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] active:shadow-none active:translate-y-1 transition-all cursor-pointer text-[#65655f] hover:text-[#be2d06]">
             Sell Asset
           </button>
         </div>

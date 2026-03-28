@@ -22,6 +22,12 @@ const useUserStore = create((set, get) => ({
       });
     }
   },
+
+  updateBalance: (newBalance) => {
+    set((state) => ({
+      profile: state.profile ? { ...state.profile, virtual_balance: newBalance } : null
+    }));
+  },
 }));
 
 export default useUserStore;

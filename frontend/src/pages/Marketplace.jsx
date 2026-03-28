@@ -179,7 +179,7 @@ export default function ScoutMarketplace() {
 
   const handleBuy = async () => {
     try {
-      const res = await buyAsset(selectedAsset.id, buyQty);
+      const res = await buyAsset(selectedAsset.ticker, buyQty);
       setSuccessMsg(res.message);
       setSelectedAsset(null);
       setTimeout(() => setSuccessMsg(null), 3000);

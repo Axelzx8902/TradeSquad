@@ -317,11 +317,30 @@ def get_user_profile(user = Depends(get_current_user)):
 def get_playing_xi(user = Depends(get_current_user)):
     """
     Fetch the authenticated user's 'Playing XI' portfolio.
-    This includes relations joining the market_assets table to get asset details.
+    Manually joins with the assets table to avoid PostgREST relationship errors.
     """
     try:
-        response = supabase.table("playing_xi").select("*, market_assets(*)").eq("user_id", user.id).execute()
-        return {"portfolio": response.data}
+        res_xi = supabase.table("playing_xi").select("*").eq("user_id", user.id).execute()
+        xi_data = res_xi.data or []
+        
+        if not xi_data:
+            return {"portfolio": []}
+            
+        asset_ids = [item["asset_id"] for item in xi_data if item.get("asset_id")]
+        
+        if asset_ids:
+            res_assets = supabase.table("assets").select("*").in_("id", asset_ids).execute()
+            assets_dict = {a["id"]: a for a in (res_assets.data or [])}
+        else:
+            assets_dict = {}
+            
+        portfolio = []
+        for item in xi_data:
+            aid = item.get("asset_id")
+            item["assets"] = assets_dict.get(aid)
+            portfolio.append(item)
+            
+        return {"portfolio": portfolio}
     except Exception as e:
         logging.error(f"Error fetching portfolio: {e}")
         raise HTTPException(status_code=500, detail="Internal server error while fetching portfolio")
@@ -335,11 +354,12 @@ def buy_asset(request: BuyAssetRequest, user = Depends(get_current_user)):
     try:
         user_id = user.id
 
-        # 1. Fetch the asset to check its price
-        asset_res = supabase.table("market_assets").select("*").eq("id", request.asset_id).execute()
+        # 1. Fetch the asset to check its price (lookup by symbol since frontend passes ticker)
+        asset_res = supabase.table("assets").select("*").eq("symbol", request.asset_id).execute()
         if not asset_res.data:
             raise HTTPException(status_code=404, detail="Asset not found")
         asset = asset_res.data[0]
+        db_asset_id = asset['id']
         
         # 2. Fetch the user to check their current balance
         user_res = supabase.table("users").select("*").eq("id", user_id).execute()
@@ -348,7 +368,7 @@ def buy_asset(request: BuyAssetRequest, user = Depends(get_current_user)):
         db_user = user_res.data[0]
         
         # 3. Calculate total cost and check for insufficient funds
-        current_price = float(asset['current_price'])
+        current_price = float(asset.get('base_price', 0))
         total_cost = current_price * request.quantity
         current_balance = float(db_user['virtual_balance'])
         
@@ -359,18 +379,30 @@ def buy_asset(request: BuyAssetRequest, user = Depends(get_current_user)):
         new_balance = current_balance - total_cost
         supabase.table("users").update({"virtual_balance": new_balance}).eq("id", user_id).execute()
         
-        # 5. Insert the new asset into the user's playing_xi
-        supabase.table("playing_xi").insert({
-            "user_id": user_id,
-            "asset_id": request.asset_id,
-            "purchase_price": current_price,
-            "quantity": request.quantity
-        }).execute()
+        # 5. Check if user already owns it, then update or insert
+        xi_res = supabase.table("playing_xi").select("*").eq("user_id", user_id).eq("asset_id", db_asset_id).execute()
+        if xi_res.data:
+            existing = xi_res.data[0]
+            # simplistic average cost calculation
+            new_quantity = existing['quantity'] + request.quantity
+            old_total = existing['purchase_price'] * existing['quantity']
+            new_avg = (old_total + total_cost) / new_quantity
+            supabase.table("playing_xi").update({
+                "quantity": new_quantity,
+                "purchase_price": new_avg
+            }).eq("id", existing['id']).execute()
+        else:
+            supabase.table("playing_xi").insert({
+                "user_id": user_id,
+                "asset_id": db_asset_id,
+                "purchase_price": current_price,
+                "quantity": request.quantity
+            }).execute()
         
         # 6. Record the transaction in the ledger
         supabase.table("transactions").insert({
             "user_id": user_id,
-            "asset_id": request.asset_id,
+            "asset_id": db_asset_id,
             "transaction_type": "BUY",
             "price_at_transaction": current_price,
             "quantity": request.quantity
@@ -378,7 +410,7 @@ def buy_asset(request: BuyAssetRequest, user = Depends(get_current_user)):
         
         return {
             "status": "success",
-            "message": f"Successfully purchased {request.quantity}x {asset['asset_name']}",
+            "message": f"Successfully purchased {request.quantity}x {asset.get('name', 'Asset')}",
             "new_balance": new_balance
         }
     except HTTPException:
@@ -387,6 +419,59 @@ def buy_asset(request: BuyAssetRequest, user = Depends(get_current_user)):
     except Exception as e:
         logging.error(f"Error completing purchase: {e}")
         raise HTTPException(status_code=500, detail="Internal server error while processing the transaction")
+
+@router.post("/sell")
+def sell_asset(request: BuyAssetRequest, user = Depends(get_current_user)):
+    try:
+        user_id = user.id
+        
+        # 1. Fetch asset (lookup by symbol)
+        asset_res = supabase.table("assets").select("*").eq("symbol", request.asset_id).execute()
+        if not asset_res.data:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        asset = asset_res.data[0]
+        db_asset_id = asset['id']
+        current_price = float(asset.get('base_price', 0))
+        
+        # 2. Check quantities
+        xi_res = supabase.table("playing_xi").select("*").eq("user_id", user_id).eq("asset_id", db_asset_id).execute()
+        if not xi_res.data:
+            raise HTTPException(status_code=400, detail="You do not own this asset")
+            
+        playing_xi_item = xi_res.data[0]
+        owned_quantity = playing_xi_item['quantity']
+        
+        if request.quantity > owned_quantity:
+            raise HTTPException(status_code=400, detail=f"Cannot sell {request.quantity}, you only own {owned_quantity}")
+            
+        # 3. Add to user's balance
+        user_res = supabase.table("users").select("*").eq("id", user_id).execute()
+        current_balance = float(user_res.data[0]['virtual_balance'])
+        total_revenue = current_price * request.quantity
+        new_balance = current_balance + total_revenue
+        supabase.table("users").update({"virtual_balance": new_balance}).eq("id", user_id).execute()
+        
+        # 4. Update/Delete playing_xi
+        new_quantity = owned_quantity - request.quantity
+        if new_quantity <= 0:
+            supabase.table("playing_xi").delete().eq("id", playing_xi_item['id']).execute()
+        else:
+            supabase.table("playing_xi").update({"quantity": new_quantity}).eq("id", playing_xi_item['id']).execute()
+            
+        # 5. Ledger
+        supabase.table("transactions").insert({
+            "user_id": user_id,
+            "asset_id": db_asset_id,
+            "transaction_type": "SELL",
+            "price_at_transaction": current_price,
+            "quantity": request.quantity
+        }).execute()
+        return {"status": "success", "message": f"Sold {request.quantity}x {asset.get('name', 'Asset')}", "new_balance": new_balance}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error completing sale: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/v1/users/me/stats")
 def get_user_stats(user = Depends(get_current_user)):
@@ -412,7 +497,8 @@ def get_user_stats(user = Depends(get_current_user)):
             "username": db_user.get("username", "Unknown Player"),
             "email": f"{db_user.get('username', 'player').lower()}@tradesquad.io",
             "lifetime_pnl": 452000, # Mock computed stats since we lack PnL resolution currently
-            "win_rate": 68.4
+            "win_rate": 68.4,
+            "virtual_balance": float(db_user.get("virtual_balance", 0))
         }
     except Exception as e:
         logging.error(f"Error fetching user stats: {e}")
@@ -429,3 +515,39 @@ def get_lessons_status(user = Depends(get_current_user)):
     except Exception as e:
         logging.error(f"Error fetching lesson status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error while fetching lesson progress")
+
+@router.get("/v1/market/asset/{ticker}")
+def get_single_asset(ticker: str):
+    import random
+    try:
+        # Fetch the base asset
+        res = supabase.table("assets").select("*").eq("symbol", ticker).execute()
+        if not res.data:
+            # Fallback trying without .NS or with .NS
+            if ticker.endswith(".NS"):
+                res = supabase.table("assets").select("*").eq("symbol", ticker.replace(".NS", "")).execute()
+            else:
+                res = supabase.table("assets").select("*").eq("symbol", ticker + ".NS").execute()
+            
+            if not res.data:
+                raise HTTPException(status_code=404, detail="Asset not found")
+                
+        db_asset = res.data[0]
+        base_price = float(db_asset.get("base_price", 0))
+        
+        # We simulate info to guarantee fast loads since YF info sometimes rate limits
+        return {
+            "name": db_asset.get("name", db_asset["symbol"]),
+            "ticker": db_asset["symbol"],
+            "price": base_price,
+            "change": round(random.uniform(-1.5, 2.5), 2),
+            "marketCap": f"₹{random.randint(5,20)}.0L Cr",
+            "peRatio": f"{random.randint(15, 40)}.4x",
+            "volume": f"{random.randint(2, 20)}.4M",
+            "status": "MARKET OPEN",
+            "squadHolding": random.randint(10, 80)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")

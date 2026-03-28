@@ -3,7 +3,7 @@ import { X, AlertTriangle } from 'lucide-react';
 
 export default function CoachAlert({ title, message, onDismiss, onProceed }) {
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]">
       <div className="bg-[#fefcf4] border-[6px] border-[#be2d06] w-full max-w-lg p-0 shadow-[12px_12px_0px_0px_#be2d06] relative" style={{ transform: 'rotate(0.5deg)' }}>
         {/* Close button */}
         <button onClick={onDismiss} className="absolute -top-4 -right-4 bg-white border-4 border-black p-2 shadow-[4px_4px_0px_0px_#000] hover:bg-[#be2d06] hover:text-white transition-colors cursor-pointer z-10">

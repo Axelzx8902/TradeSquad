@@ -15,7 +15,7 @@ const usePortfolioStore = create((set) => ({
             // Map the nested Supabase layout to the flat standard required by Dashboard.jsx
             const formattedPortfolio = rawPortfolio.map((item) => {
                 const purchasePrice = Number(item.purchase_price);
-                const currentPrice = Number(item.market_assets?.current_price || 0);
+                const currentPrice = Number(item.assets?.base_price || item.assets?.current_price || 0);
                 
                 // Calculate percentage PnL
                 const changePercent = purchasePrice > 0 
@@ -24,8 +24,8 @@ const usePortfolioStore = create((set) => ({
                 
                 return {
                     id: item.id,
-                    name: item.market_assets?.asset_name || 'UNKNOWN',
-                    ticker: item.market_assets?.ticker_symbol || 'UNK',
+                    name: item.assets?.name || item.assets?.asset_name || 'UNKNOWN',
+                    ticker: item.assets?.symbol || item.assets?.ticker_symbol || 'UNK',
                     price: currentPrice,
                     change: parseFloat(changePercent.toFixed(2)),
                     // Mocking standard Brutalist role assignment

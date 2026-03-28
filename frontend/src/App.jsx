@@ -1,5 +1,6 @@
-import React from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { supabase } from './supabaseClient';
 import Navigation from './components/Navigation';
 import PlayingXIDashboard from './pages/Dashboard';
 import ScoutMarketplace from './pages/Marketplace';
@@ -16,11 +17,6 @@ import NewsVsNumbers from './pages/NewsVsNumbers';
 import PointsTable from './pages/PointsTable';
 
 function AppLayout() {
-  const location = useLocation();
-  const isAuthPage = location.pathname === '/auth';
-
-  if (isAuthPage) return <AuthPage />;
-
   return (
     <div className="min-h-screen bg-[#fefcf4] text-black" style={{
       backgroundImage: 'radial-gradient(rgba(186,185,178,0.15) 2px, transparent 2px)',
@@ -49,12 +45,84 @@ function AppLayout() {
   );
 }
 
+// Guard: only render children when the user has a valid session
+function RequireAuth({ session, loading, children }) {
+  if (loading) {
+    // Brutalist loading screen
+    return (
+      <div
+        className="min-h-screen bg-[#fefcf4] flex items-center justify-center"
+        style={{
+          backgroundImage: 'radial-gradient(rgba(186,185,178,0.15) 2px, transparent 2px)',
+          backgroundSize: '32px 32px',
+        }}
+      >
+        <div className="bg-[#fad538] border-4 border-black p-6 shadow-[6px_6px_0px_0px_#000]">
+          <p className="font-black uppercase text-lg tracking-tight animate-pulse">
+            Loading...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  return children;
+}
+
 export default function App() {
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // 1. Check for an existing session on mount
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      setLoading(false);
+
+      // Keep the axios interceptor token in sync
+      if (s) {
+        localStorage.setItem(
+          'sb-auth-token',
+          JSON.stringify({ access_token: s.access_token })
+        );
+      }
+    });
+
+    // 2. Listen for auth changes (login, logout, token refresh)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+
+      if (s) {
+        localStorage.setItem(
+          'sb-auth-token',
+          JSON.stringify({ access_token: s.access_token })
+        );
+      } else {
+        localStorage.removeItem('sb-auth-token');
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/auth" element={<AuthPage />} />
-        <Route path="/*" element={<AppLayout />} />
+        <Route
+          path="/*"
+          element={
+            <RequireAuth session={session} loading={loading}>
+              <AppLayout />
+            </RequireAuth>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );

@@ -3,15 +3,18 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 import CoachAlert from '../components/CoachAlert';
 import usePortfolioStore from '../store/portfolioStore';
+import useUserStore from '../store/userStore';
 
 export default function PlayingXIDashboard() {
   const [coachAlert, setCoachAlert] = useState(null);
   
   // Zustand State hooks
-  const { portfolio, isLoading, error, fetchData } = usePortfolioStore();
+  const { portfolio, isLoading: portfolioLoading, error, fetchData } = usePortfolioStore();
+  const { profile, fetchProfile } = useUserStore();
 
   useEffect(() => {
     fetchData();
+    fetchProfile();
 
     // Show a demo coach alert after 3 seconds for UI demonstration
     const timer = setTimeout(() => {
@@ -24,7 +27,7 @@ export default function PlayingXIDashboard() {
   }, [fetchData]);
 
   // Handle Neo-Brutalist Loading State
-  if (isLoading) {
+  if (portfolioLoading) {
     return (
       <div className="min-h-screen bg-[#fefcf4] flex items-center justify-center p-6 md:ml-64 font-sans">
         <div className="bg-[#fad538] border-[8px] border-black p-10 md:p-16 shadow-[12px_12px_0px_0px_#000] flex flex-col items-center transform transition-transform animate-pulse">
@@ -51,7 +54,7 @@ export default function PlayingXIDashboard() {
     );
   }
 
-  const totalValue = portfolio.reduce((sum, s) => sum + (s.price || 0), 0);
+  const totalValue = portfolio.reduce((sum, s) => sum + ((s.price || 0) * (s.quantity || 1)), 0);
 
   return (
     <div className="p-6 md:ml-64 pb-32 md:pb-12 min-h-screen bg-[#fefcf4] font-sans">
@@ -71,10 +74,16 @@ export default function PlayingXIDashboard() {
           <p className="text-[10px] md:text-sm font-black uppercase text-[#81817a] tracking-widest pl-1">Squad Strength Dashboard</p>
         </div>
         
-        {/* Portfolio Block */}
-        <div className="bg-[#fad538] border-[6px] border-black p-5 shadow-[8px_8px_0px_0px_#000] shrink-0 min-w-[240px]">
-          <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-[#8b7300] mb-2">Portfolio Value</p>
-          <p className="text-4xl sm:text-5xl font-black text-black leading-none">₹{totalValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+        {/* Financial Blocks */}
+        <div className="flex flex-col sm:flex-row gap-4 shrink-0">
+          <div className="bg-white border-[6px] border-black p-5 shadow-[8px_8px_0px_0px_#000] min-w-[200px]">
+            <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-[#65655f] mb-2">Virtual Balance</p>
+            <p className="text-3xl sm:text-4xl font-black text-black leading-none">₹{profile?.virtual_balance ? profile.virtual_balance.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '0.00'}</p>
+          </div>
+          <div className="bg-[#fad538] border-[6px] border-black p-5 shadow-[8px_8px_0px_0px_#000] min-w-[200px]">
+            <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-[#8b7300] mb-2">Portfolio Value</p>
+            <p className="text-3xl sm:text-4xl font-black text-black leading-none">₹{totalValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+          </div>
         </div>
       </div>
 
@@ -82,7 +91,7 @@ export default function PlayingXIDashboard() {
         <div className="w-full max-w-[1400px] mx-auto bg-white border-[6px] border-black p-12 text-center shadow-[8px_8px_0px_0px_#000]">
           <h2 className="text-3xl font-black text-black uppercase mb-4">Your dugout is empty</h2>
           <p className="text-xl text-[#81817a] font-black mb-8">Head to the marketplace to draft your first MVP asset.</p>
-          <Link to="/marketplace" className="bg-black text-white px-8 py-4 font-black uppercase text-xl hover:bg-[#fad538] hover:text-black transition-colors border-[4px] border-black">
+          <Link to="/scout" className="bg-black text-white px-8 py-4 font-black uppercase text-xl hover:bg-[#fad538] hover:text-black transition-colors border-[4px] border-black">
             Enter Marketplace
           </Link>
         </div>

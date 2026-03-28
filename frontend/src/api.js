@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { supabase } from './supabaseClient';
 
 const api = axios.create({
     baseURL: 'http://127.0.0.1:8000/api', 
@@ -8,22 +9,14 @@ const api = axios.create({
 });
 
 // Interceptor to inject the Supabase JWT access token on every request
-api.interceptors.request.use((config) => {
-    // Assuming your application uses Supabase JS client or stores the auth session somewhere.
-    // For manual handling, ensure your token is saved appropriately.
-    const sessionStr = localStorage.getItem('sb-auth-token'); 
-    
-    if (sessionStr) {
-        try {
-            // Adjust this parsing based on exactly how you store the session
-            const session = JSON.parse(sessionStr); 
-            if (session?.access_token) {
-                config.headers.Authorization = `Bearer ${session.access_token}`;
-            }
-        } catch (e) {
-            // If it's a raw string instead of JSON object
-            config.headers.Authorization = `Bearer ${sessionStr}`;
+api.interceptors.request.use(async (config) => {
+    try {
+        const { data } = await supabase.auth.getSession();
+        if (data?.session?.access_token) {
+            config.headers.Authorization = `Bearer ${data.session.access_token}`;
         }
+    } catch (err) {
+        console.error("Auth token injection failed:", err);
     }
     return config;
 }, (error) => Promise.reject(error));
@@ -40,6 +33,11 @@ export const fetchPortfolio = async () => {
 
 export const fetchLessonsStatus = async () => {
     const res = await api.get(`/lessons/status`);
+    return res.data;
+};
+
+export const fetchAssetByTicker = async (ticker) => {
+    const res = await api.get(`/v1/market/asset/${ticker}`);
     return res.data;
 };
 
@@ -72,6 +70,14 @@ export const buyAsset = async (assetId, quantity = 1) => {
     const res = await api.post(`/buy`, {
         asset_id: assetId,
         quantity // user_id is stripped; derived by backend from JWT securely
+    });
+    return res.data;
+};
+
+export const sellAsset = async (assetId, quantity = 1) => {
+    const res = await api.post(`/sell`, {
+        asset_id: assetId,
+        quantity
     });
     return res.data;
 };
