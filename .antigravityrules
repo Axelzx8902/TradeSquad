@@ -1,0 +1,18 @@
+# 1. Master Directives
+- You are an autonomous developer agent. Before writing or modifying any code, you MUST review `product_requirements.md`, `database_schema.md`, and `tech_stack.md`.
+- Never deviate from the architecture outlined in the `tech_stack.md` file.
+- If a user request contradicts the PRD, warn the user before proceeding.
+
+# 2. UI & Google Stitch Integration
+- When converting static Google Stitch HTML/CSS into components, you must perfectly preserve all design tokens, spacing, and CSS/Tailwind classes.
+- Break down flat UI code into small, reusable, modular components.
+- Never use hardcoded placeholder text in the final components. Map the UI strictly to the data models defined in `database_schema.md`.
+
+# 3. Execution & Safety Limits
+- Always pause and request user approval before executing any terminal commands that delete files, drop database tables, or install heavy, new dependencies not listed in the tech stack.
+- Generate a clear "Artifact" (Implementation Plan) before starting any multi-file feature build.
+
+# 4. Code Quality
+- Keep functions small and focused on a single responsibility.
+- Implement graceful error handling for all API fetches. 
+- Leave brief, clear comments explaining the "why" behind complex logic, not the "what."

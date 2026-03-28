@@ -1,0 +1,45 @@
+product_requirements.md (Updated)
+Project Name: TradeSquad
+Core Identity: "Learn first, play second." A gamified trading simulator specifically designed for Indian students.
+Platform Target: Progressive Web App (PWA) with a mobile-first responsive design.
+Design System: Neo-Brutalism (Tailwind CSS, thick borders, high contrast, dynamic scaling for mobile viewports).
+
+1. Core User Flows & Screen Map (12 Total Screens)
+
+Authentication: Login / Sign Up.
+
+Main Dashboard: The central hub showing total portfolio value and active alerts.
+
+Playing XI (Portfolio): The core simulator. Displays owned assets. (Layout: 3-column grid on desktop, 1-column stack on mobile).
+
+Market/Scouting: Where users browse and purchase new "cricket-styled" assets.
+
+Asset Detail: Deep dive into a single asset's price history and stats.
+
+The Dugout (Learning Hub): The educational core. Users must consume content here to unlock certain assets or features.
+
+Lesson Detail: The actual reading/interactive learning screen.
+
+Coach Alerts: A dedicated feed for behavioral nudges and market warnings.
+
+Leaderboard: Gamified ranking against other users.
+
+User Profile: Account details, trading history, and badges.
+
+Settings: App preferences, PWA install prompts, and theme toggles.
+
+Information (NEW): A dedicated section detailing the rules of the app, how the simulator works, and "About Us" context.
+
+2. Navigation Architecture
+
+Desktop: Left-aligned vertical sidebar (w-64, persistent).
+
+Mobile: Bottom fixed tab bar (bottom-0, max 4-5 icons). Secondary links (like Settings and the new Information section) are housed in a collapsible hamburger/more menu.
+
+3. MVP Technical Constraints
+
+Frontend: React (Vite) + Tailwind CSS.
+
+Backend: Python (FastAPI).
+
+Database: Supabase (PostgreSQL).
