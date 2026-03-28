@@ -206,31 +206,61 @@ async def websocket_market_scout(websocket: WebSocket):
 
 @router.get("/v1/news")
 def get_market_news():
-    """Scrape Google News RSS for Indian finance and return trending & industry_focus."""
-    import feedparser, random
-    RSS_URL = "https://news.google.com/rss/search?q=finance+india+stock+market&hl=en-IN&gl=IN&ceid=IN:en"
-    feed = feedparser.parse(RSS_URL)
-    entries = feed.entries[:10]
+    """Fetch market news from Finnhub API for Indian / general finance news."""
+    import requests, os, random
+    from datetime import datetime, timezone
 
-    # Clean titles by removing publisher after ' - '
-    cleaned = []
-    for entry in entries:
-        title = entry.title
-        if " - " in title:
-            title = title.split(" - ")[0]
-        cleaned.append(title)
+    FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
+    if not FINNHUB_KEY:
+        raise HTTPException(status_code=500, detail="FINNHUB_API_KEY not configured in .env")
 
-    # Trending first 3
-    trending = [{"id": i+1, "headline": cleaned[i]} for i in range(min(3, len(cleaned)))]
+    try:
+        resp = requests.get(
+            "https://finnhub.io/api/v1/news",
+            params={"category": "general", "token": FINNHUB_KEY},
+            timeout=10
+        )
+        resp.raise_for_status()
+        articles = resp.json()[:15]  # Cap at 15 articles
+    except Exception as e:
+        logging.error(f"Finnhub news error: {e}")
+        raise HTTPException(status_code=502, detail="Could not fetch news from Finnhub")
 
-    # Industry focus remaining 7 with random sector badge
-    sectors = ["#BANKING", "#IT", "#ENERGY"]
+    # Format timestamps
+    def fmt_time(epoch):
+        try:
+            dt = datetime.fromtimestamp(epoch, tz=timezone.utc)
+            return dt.strftime("%d %b %Y, %I:%M %p UTC")
+        except Exception:
+            return ""
+
+    # Split into trending (first 5) and industry_focus (rest)
+    sectors = ["#BANKING", "#IT", "#ENERGY", "#PHARMA", "#AUTO", "#MARKETS"]
+
+    trending = []
+    for i, a in enumerate(articles[:5]):
+        trending.append({
+            "id": i + 1,
+            "headline": a.get("headline", ""),
+            "summary": a.get("summary", ""),
+            "source": a.get("source", ""),
+            "timestamp": fmt_time(a.get("datetime", 0)),
+            "url": a.get("url", ""),
+            "image": a.get("image", ""),
+            "category": a.get("category", "general"),
+        })
+
     industry_focus = []
-    for i in range(3, len(cleaned)):
+    for i, a in enumerate(articles[5:]):
         industry_focus.append({
-            "id": i+1,
-            "headline": cleaned[i],
-            "sector_badge": random.choice(sectors)
+            "id": i + 6,
+            "headline": a.get("headline", ""),
+            "summary": a.get("summary", ""),
+            "source": a.get("source", ""),
+            "timestamp": fmt_time(a.get("datetime", 0)),
+            "url": a.get("url", ""),
+            "image": a.get("image", ""),
+            "sector_badge": random.choice(sectors),
         })
 
     return {"trending": trending, "industry_focus": industry_focus}
