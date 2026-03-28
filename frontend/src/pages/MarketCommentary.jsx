@@ -3,7 +3,7 @@ import { Newspaper, TrendingUp, AlertTriangle, ExternalLink, Clock, ImageOff } f
 import { fetchMarketNews } from '../api';
 
 export default function MarketCommentary() {
-  const [newsData, setNewsData] = useState({ trending: [], industry_focus: [] });
+  const [newsData, setNewsData] = useState({ trending: [], industry_focus: [], is_mock: false });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -12,6 +12,9 @@ export default function MarketCommentary() {
     fetchMarketNews()
       .then(data => {
         setNewsData(data);
+        if (data.is_mock) {
+          console.warn('MarketCommentary: Finnhub unavailable — showing mock/demo news data.');
+        }
         setLoading(false);
       })
       .catch(err => {
@@ -50,8 +53,16 @@ export default function MarketCommentary() {
       <div className="mb-8">
         <h1 className="text-4xl md:text-5xl font-black uppercase tracking-tighter leading-none">Market Commentary</h1>
         <p className="text-xs font-bold uppercase text-[#65655f] mt-2 tracking-widest flex items-center gap-2">
-          <Newspaper size={14} /> Powered by Finnhub • Live Financial News
+          <Newspaper size={14} /> Powered by Finnhub • {newsData.is_mock ? 'Demo Mode — Live Feed Unavailable' : 'Live Financial News'}
         </p>
+        {newsData.is_mock && (
+          <div className="mt-4 bg-[#fad538] border-4 border-black px-4 py-3 shadow-[4px_4px_0px_0px_#000] flex items-center gap-3 max-w-2xl">
+            <AlertTriangle size={20} strokeWidth={3} />
+            <p className="text-xs font-black uppercase tracking-wide">
+              Finnhub feed unavailable — displaying curated demo news. Check backend logs for the exact error (likely rate-limit or SSL issue).
+            </p>
+          </div>
+        )}
       </div>
 
       {/* ── TRENDING NOW ── */}

@@ -15,15 +15,6 @@ export default function PlayingXIDashboard() {
   useEffect(() => {
     fetchData();
     fetchProfile();
-
-    // Show a demo coach alert after 3 seconds for UI demonstration
-    const timer = setTimeout(() => {
-      setCoachAlert({
-        title: 'Panic Sell Alert!',
-        message: 'Stay Calm, Batsman! Reliance is hitting a temporary rough patch. Historical data shows 78% of similar dips recover within 5 trading days.'
-      });
-    }, 3000);
-    return () => clearTimeout(timer);
   }, [fetchData]);
 
   // Handle Neo-Brutalist Loading State

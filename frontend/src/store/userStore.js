@@ -6,10 +6,10 @@ const useUserStore = create((set, get) => ({
   isLoading: false,
   error: null,
 
-  fetchProfile: async () => {
+  fetchProfile: async (forceRefetch = false) => {
     const currentProfile = get().profile;
-    // Don't refetch if we already have it! (Per User Request: "hold this globally so I don't have to fetch it every time")
-    if (currentProfile) return;
+    // Don't refetch if we already have it — unless explicitly forced (e.g. ProfilePage)
+    if (currentProfile && !forceRefetch) return;
 
     set({ isLoading: true, error: null });
     try {

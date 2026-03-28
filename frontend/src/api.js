@@ -51,6 +51,11 @@ export const fetchMarketNews = async () => {
     return res.data;
 };
 
+export const fetchLedger = async (page = 1, pageSize = 10) => {
+    const res = await api.get(`/v1/ledger`, { params: { page, page_size: pageSize } });
+    return res.data;
+};
+
 export const fetchUserProfileStats = async () => {
     const res = await api.get(`/v1/users/me/stats`);
     return res.data;

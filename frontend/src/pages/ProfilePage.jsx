@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, PenLine, ShieldUser } from 'lucide-react';
+import { LogOut, PenLine, ShieldUser, TrendingUp, TrendingDown } from 'lucide-react';
 import useUserStore from '../store/userStore';
+import { supabase } from '../supabaseClient';
 
 export default function ProfilePage() {
   const [darkMode, setDarkMode] = useState(false);
@@ -13,14 +14,19 @@ export default function ProfilePage() {
     const next = !liveDataMode;
     setLiveDataMode(next);
     localStorage.setItem('tradesquad_data_mode', next ? 'live' : 'demo');
-    // Dispatch custom event so Marketplace picks up the change reactively
     window.dispatchEvent(new CustomEvent('tradesquad_mode_change', { detail: { live: next } }));
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    window.location.href = '/login';
   };
 
   const { profile, isLoading, error, fetchProfile } = useUserStore();
 
   useEffect(() => {
-    fetchProfile();
+    // Force a fresh fetch so stats are always current when visiting the profile page
+    fetchProfile(true);
   }, [fetchProfile]);
 
   if (error) {
@@ -40,16 +46,28 @@ export default function ProfilePage() {
     );
   }
 
+  // Derived values with safe fallbacks
+  const lifetimePnl    = profile.lifetime_pnl   ?? 0;
+  const winRate        = profile.win_rate        ?? 0;
+  const buyCount       = profile.buy_count       ?? 0;
+  const sellCount      = profile.sell_count      ?? 0;
+  const totalTrades    = profile.total_trades    ?? 0;
+  const monthlyPnlPct  = profile.monthly_pnl_pct ?? 0;
+  const monthlyPnl     = profile.monthly_pnl     ?? 0;
+  const memberSince    = profile.member_since    ?? '2023';
+  const isPnlPositive  = lifetimePnl >= 0;
+  const isMonthlyPos   = monthlyPnlPct >= 0;
+
   return (
     <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen bg-[#fefcf4] max-w-6xl mx-auto flex flex-col items-start font-sans">
-      
+
       {/* ── HEADER ── */}
       <div className="bg-[#c3b4fc] border-[6px] border-black px-8 py-3 shadow-[8px_8px_0px_0px_#000] inline-block mb-12 relative" style={{ transform: 'rotate(-2deg)' }}>
         <h1 className="text-6xl md:text-8xl font-black uppercase tracking-tighter text-[#3d306f] leading-none">Profile</h1>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8 w-full">
-        
+
         {/* ── LEFT COLUMN ── */}
         <div className="flex flex-col gap-8 w-full lg:w-1/3">
           
@@ -57,25 +75,25 @@ export default function ProfilePage() {
           <div className="bg-white border-[6px] border-black shadow-[8px_8px_0px_0px_#000] p-6 flex flex-col items-center" style={{ transform: 'rotate(1deg)' }}>
             <div className="relative mb-6">
               <div className="w-32 h-32 bg-[#2d4b5a] border-[4px] border-black shadow-[4px_4px_0px_0px_#000] flex items-center justify-center overflow-hidden" style={{ transform: 'rotate(-2deg)' }}>
-                {/* Mock Image Placeholder */}
                 <div className="w-full h-full bg-[#1b3644] text-white flex items-end justify-center pb-2 text-6xl shadow-inner">
                   👤
                 </div>
               </div>
+              {/* Rank badge based on trade count */}
               <div className="absolute -bottom-3 -right-2 bg-[#8b7300] border-[3px] border-black px-3 py-1 text-[10px] font-black uppercase text-white shadow-[2px_2px_0px_0px_#000]" style={{ transform: 'rotate(-4deg)' }}>
-                Captain Rank
+                {totalTrades >= 20 ? 'Captain' : totalTrades >= 5 ? 'Vice Captain' : 'Rookie'} Rank
               </div>
             </div>
 
             <h2 className="text-3xl font-black uppercase tracking-tighter text-center">{profile.username}</h2>
             <div className="mt-2 border-[3px] border-black px-4 py-1.5 text-xs font-black uppercase tracking-widest text-[#65655f]">
-              Member Since 2023
+              Member Since {memberSince}
             </div>
 
             <div className="w-full mt-8 space-y-4 text-left">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-[#8b7300] mb-2 px-1">Email Address</p>
-                <div className="w-full border-[4px] border-black p-3 bg-white font-bold text-sm shadow-[3px_3px_0px_0px_#000]">
+                <div className="w-full border-[4px] border-black p-3 bg-white font-bold text-sm shadow-[3px_3px_0px_0px_#000] break-all">
                   {profile.email}
                 </div>
               </div>
@@ -83,6 +101,12 @@ export default function ProfilePage() {
                 <p className="text-[10px] font-black uppercase tracking-widest text-[#8b7300] mb-2 px-1">User ID</p>
                 <div className="w-full border-[4px] border-black p-3 bg-white font-bold text-sm shadow-[3px_3px_0px_0px_#000]">
                   {profile.user_id}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#8b7300] mb-2 px-1">Virtual Balance</p>
+                <div className="w-full border-[4px] border-black p-3 bg-[#fad538] font-black text-sm shadow-[3px_3px_0px_0px_#000]">
+                  ₹{Number(profile.virtual_balance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                 </div>
               </div>
             </div>
@@ -94,20 +118,32 @@ export default function ProfilePage() {
           
           {/* Stats Row */}
           <div className="flex flex-col sm:flex-row gap-6 h-auto sm:h-48">
+
             {/* Lifetime P&L */}
-            <div className="flex-1 bg-[#d4ebd8] border-[6px] border-black shadow-[8px_8px_0px_0px_#000] p-6 flex flex-col justify-center relative">
-              <p className="font-black uppercase text-[10px] tracking-widest text-[#2a5d34] mb-2">Total Lifetime P&L</p>
-              <p className="text-3xl md:text-5xl font-black text-[#2a5d34] leading-none mb-4"><span className="text-4xl">{profile.lifetime_pnl > 0 ? '+' : ''}</span><br/>₹{profile.lifetime_pnl.toLocaleString('en-IN')}</p>
-              <div className="bg-white/60 border-2 border-transparent px-2 py-1 absolute bottom-4 left-6 text-[10px] font-black uppercase text-[#2a5d34] inline-block tracking-widest bg-[#edf7ee]">
-                📈 12.4% This Month
+            <div className={`flex-1 border-[6px] border-black shadow-[8px_8px_0px_0px_#000] p-6 flex flex-col justify-center relative ${isPnlPositive ? 'bg-[#d4ebd8]' : 'bg-[#fde8e8]'}`}>
+              <p className={`font-black uppercase text-[10px] tracking-widest mb-2 ${isPnlPositive ? 'text-[#2a5d34]' : 'text-[#7a1a1a]'}`}>Total Lifetime P&L</p>
+              <div className="flex items-center gap-2 mb-1">
+                {isPnlPositive
+                  ? <TrendingUp size={20} strokeWidth={3} className="text-[#2a5d34]" />
+                  : <TrendingDown size={20} strokeWidth={3} className="text-[#be2d06]" />
+                }
+              </div>
+              <p className={`text-3xl md:text-5xl font-black leading-none mb-4 ${isPnlPositive ? 'text-[#2a5d34]' : 'text-[#be2d06]'}`}>
+                {isPnlPositive ? '+' : ''}₹{Math.abs(lifetimePnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              </p>
+              <div className={`px-2 py-1 absolute bottom-4 left-6 text-[10px] font-black uppercase inline-block tracking-widest ${isMonthlyPos ? 'bg-[#edf7ee] text-[#2a5d34]' : 'bg-[#fde8e8] text-[#be2d06]'}`}>
+                {isMonthlyPos ? '📈' : '📉'} {isMonthlyPos ? '+' : ''}{monthlyPnlPct}% This Month
               </div>
             </div>
+
             {/* Win Rate */}
             <div className="flex-1 bg-[#fad538] border-[6px] border-black shadow-[8px_8px_0px_0px_#000] p-6 flex flex-col justify-center relative">
               <p className="font-black uppercase text-[10px] tracking-widest text-[#5a4a00] mb-2">Win Rate</p>
-              <p className="text-5xl md:text-6xl font-black text-black leading-none mb-4">{profile.win_rate}%</p>
-              <div className="bg-white/60 border-2 border-transparent px-2 py-1 absolute bottom-4 left-6 text-[10px] font-black uppercase text-[#5a4a00] inline-block tracking-widest bg-[#fef5cc]">
-                🏏 142 Matches Won
+              <p className="text-5xl md:text-6xl font-black text-black leading-none mb-4">
+                {sellCount > 0 ? `${winRate}%` : '—'}
+              </p>
+              <div className="bg-white/60 px-2 py-1 absolute bottom-4 left-6 text-[10px] font-black uppercase text-[#5a4a00] inline-block tracking-widest bg-[#fef5cc]">
+                🏏 {buyCount} Buys · {sellCount} Sells · {totalTrades} Total
               </div>
             </div>
           </div>
@@ -123,10 +159,9 @@ export default function ProfilePage() {
                   <p className="font-black uppercase text-sm text-[#44443f]">Dark Mode</p>
                   <p className="text-[10px] font-black uppercase tracking-widest text-[#81817a]">Optimize for late night trading</p>
                 </div>
-                {/* Toggle implementation reflecting visual style */}
                 <button onClick={() => setDarkMode(!darkMode)} className="w-16 h-8 flex border-[4px] border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer shrink-0">
-                  <div className={`flex-1 h-full \${darkMode ? 'bg-black' : 'bg-white'}`}></div>
-                  <div className={`flex-1 h-full \${!darkMode ? 'bg-black' : 'bg-white'}`}></div>
+                  <div className={`flex-1 h-full ${darkMode ? 'bg-black' : 'bg-white'}`}></div>
+                  <div className={`flex-1 h-full ${!darkMode ? 'bg-black' : 'bg-white'}`}></div>
                 </button>
               </div>
               
@@ -137,12 +172,12 @@ export default function ProfilePage() {
                   <p className="text-[10px] font-black uppercase tracking-widest text-[#81817a]">Immersive crowd noise on live trades</p>
                 </div>
                 <button onClick={() => setStadiumAudio(!stadiumAudio)} className="w-16 h-8 flex border-[4px] border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer shrink-0">
-                  <div className={`flex-1 h-full \${stadiumAudio ? 'bg-[#8b7300]' : 'bg-white'}`}></div>
-                  <div className={`flex-1 h-full \${!stadiumAudio ? 'bg-black' : 'bg-white'}`}></div>
+                  <div className={`flex-1 h-full ${stadiumAudio ? 'bg-[#8b7300]' : 'bg-white'}`}></div>
+                  <div className={`flex-1 h-full ${!stadiumAudio ? 'bg-black' : 'bg-white'}`}></div>
                 </button>
               </div>
 
-              {/* ─── Live Data Mode Toggle ─── */}
+              {/* Live Data Mode Toggle */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <p className="font-black uppercase text-sm text-[#44443f]">Data Mode</p>
@@ -152,7 +187,7 @@ export default function ProfilePage() {
                 </div>
                 <button
                   onClick={toggleLiveMode}
-                  className={`w-16 h-8 flex border-[4px] border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer shrink-0 transition-colors`}
+                  className="w-16 h-8 flex border-[4px] border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer shrink-0 transition-colors"
                 >
                   <div className={`flex-1 h-full ${liveDataMode ? 'bg-[#be2d06]' : 'bg-white'}`}></div>
                   <div className={`flex-1 h-full ${!liveDataMode ? 'bg-black' : 'bg-white'}`}></div>
@@ -177,7 +212,10 @@ export default function ProfilePage() {
             <button className="flex-1 border-[6px] border-black bg-black text-white px-6 py-4 font-black uppercase shadow-[6px_6px_0px_0px_#b6b6b6] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-3">
               <PenLine size={18} /> Edit Details
             </button>
-            <button className="flex-1 border-[6px] border-black bg-[#b6353a] text-white px-6 py-4 font-black uppercase shadow-[6px_6px_0px_0px_#000] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-3">
+            <button
+              onClick={handleSignOut}
+              className="flex-1 border-[6px] border-black bg-[#b6353a] text-white px-6 py-4 font-black uppercase shadow-[6px_6px_0px_0px_#000] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-3 hover:bg-[#8f1f24] cursor-pointer"
+            >
               <LogOut size={18} /> Sign Out
             </button>
           </div>
@@ -187,21 +225,20 @@ export default function ProfilePage() {
 
       {/* ── SQUAD BANNER BOTTOM ── */}
       <div className="w-full bg-white border-[6px] border-black shadow-[8px_8px_0px_0px_#000] p-6 mt-12 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
-        {/* Background graphic */}
         <div className="absolute right-10 -bottom-10 opacity-10 pointer-events-none">
-           <ShieldUser size={200} strokeWidth={1} />
+          <ShieldUser size={200} strokeWidth={1} />
         </div>
-        
         <div className="flex items-center gap-6 z-10 w-full md:w-auto">
           <div className="w-16 h-16 bg-[#7c66c7] border-[4px] border-black flex items-center justify-center shadow-[4px_4px_0px_0px_#000]" style={{ transform: 'rotate(-5deg)' }}>
             <ShieldUser size={24} color="white" />
           </div>
           <div>
             <h3 className="font-black text-xl uppercase tracking-tighter text-[#3d306f]">The Mumbai Mavericks</h3>
-            <p className="text-[10px] font-black tracking-widest text-[#81817a] uppercase mt-1">Squad Position: Lead Trader</p>
+            <p className="text-[10px] font-black tracking-widest text-[#81817a] uppercase mt-1">
+              Squad Position: {totalTrades >= 10 ? 'Lead Trader' : 'Bench Player'}
+            </p>
           </div>
         </div>
-        
         <button className="w-full md:w-auto bg-[#fad538] border-[4px] border-black px-6 py-3 font-black text-sm uppercase shadow-[4px_4px_0px_0px_#000] active:translate-y-1 active:shadow-none transition-all z-10 text-center">
           View Squad Room
         </button>

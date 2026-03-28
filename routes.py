@@ -246,6 +246,7 @@ def get_market_news():
     if not FINNHUB_KEY:
         raise HTTPException(status_code=500, detail="FINNHUB_API_KEY not configured in .env")
 
+    is_mock = False
     try:
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -256,10 +257,22 @@ def get_market_news():
             timeout=10,
             verify=False
         )
-        resp.raise_for_status()
-        articles = resp.json()[:15]  # Cap at 15 articles
+        # Log response details before raising, so we know exactly what went wrong
+        if not resp.ok:
+            logging.error(
+                f"Finnhub API returned HTTP {resp.status_code}. "
+                f"Body: {resp.text[:500]}"
+            )
+            resp.raise_for_status()
+        raw = resp.json()
+        if not isinstance(raw, list) or len(raw) == 0:
+            logging.warning(f"Finnhub returned unexpected payload: {str(raw)[:200]}")
+            raise ValueError("Finnhub response was empty or not a list")
+        articles = raw[:15]  # Cap at 15 articles
+        logging.info(f"Finnhub news fetched successfully: {len(articles)} articles")
     except Exception as e:
-        logging.error(f"Finnhub news error: {e}")
+        logging.error(f"Finnhub news error (falling back to mock): {e}")
+        is_mock = True
         # FALLBACK: If API key is blocked or invalid, return realistic mock data for the MVP
         articles = [
             {
@@ -357,7 +370,7 @@ def get_market_news():
             "sector_badge": random.choice(sectors),
         })
 
-    return {"trending": trending, "industry_focus": industry_focus}
+    return {"trending": trending, "industry_focus": industry_focus, "is_mock": is_mock}
 
 @router.get("/users/me")
 def get_user_profile(user = Depends(get_current_user)):
@@ -538,30 +551,118 @@ def sell_asset(request: BuyAssetRequest, user = Depends(get_current_user)):
 @router.get("/v1/users/me/stats")
 def get_user_stats(user = Depends(get_current_user)):
     """
-    Get profile stats and metadata for the global Zustand store.
+    Get profile stats computed from real DB data:
+    - username, email (from Supabase auth), virtual_balance, member_since (from users table)
+    - lifetime P&L: total SELL revenue minus total BUY cost (from transactions)
+    - win_rate: % of sells where sell_price > buy (purchase_price from playing_xi as proxy)
+    - total_trades, buy_count, sell_count (from transactions)
+    - monthly_pnl_pct: P&L from transactions in the last 30 days as % of starting balance
     """
     try:
-        user_record = supabase.table("users").select("*").eq("id", user.id).execute()
-        
-        # If the mock user UUID doesn't actually exist in the DB, fallback to a local mock object gracefully
+        user_id = str(user.id)
+
+        # ── 1. Fetch user record (balance, username, created_at) ────────────
+        user_record = supabase.table("users").select("*").eq("id", user_id).execute()
         if not user_record.data:
-            return {
-                "user_id": "#CRIC-TEST",
-                "username": "MVP Demo User",
-                "email": "demo@tradesquad.io",
-                "lifetime_pnl": 452000,
-                "win_rate": 68.4
-            }
-            
+            raise HTTPException(status_code=404, detail="User profile not found in database")
         db_user = user_record.data[0]
+
+        # ── 2. Pull email from Supabase auth user object ────────────────────
+        real_email = getattr(user, "email", None) or f"{db_user.get('username', 'player').lower()}@tradesquad.io"
+
+        # ── 3. Format member_since from created_at ──────────────────────────
+        created_raw = db_user.get("created_at", "")
+        member_since = "2023"  # safe fallback
+        if created_raw:
+            try:
+                import datetime as _dt
+                d = _dt.datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                member_since = d.strftime("%b %Y")  # e.g. "Mar 2026"
+            except Exception:
+                pass
+
+        # ── 4. Fetch ALL transactions for P&L and win-rate computation ──────
+        tx_res = (
+            supabase.table("transactions")
+            .select("transaction_type, price_at_transaction, quantity, executed_at")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        all_txns = tx_res.data or []
+
+        total_trades = len(all_txns)
+        buy_count  = sum(1 for t in all_txns if t["transaction_type"] == "BUY")
+        sell_count = total_trades - buy_count
+
+        # Lifetime P&L = total SELL revenue − total BUY cost
+        total_sell_revenue = sum(
+            float(t["price_at_transaction"]) * int(t["quantity"])
+            for t in all_txns if t["transaction_type"] == "SELL"
+        )
+        total_buy_cost = sum(
+            float(t["price_at_transaction"]) * int(t["quantity"])
+            for t in all_txns if t["transaction_type"] == "BUY"
+        )
+        lifetime_pnl = round(total_sell_revenue - total_buy_cost, 2)
+
+        # ── 5. Win rate ─────────────────────────────────────────────────────
+        # We compare each SELL price vs the asset's latest purchase_price from playing_xi.
+        # This is an approximation; a fully accurate calc would need cost-basis tracking.
+        # Win rate = (sells where sell_price > purchase_price) / total sells * 100
+        win_rate = 0.0
+        if sell_count > 0:
+            sells = [t for t in all_txns if t["transaction_type"] == "SELL"]
+            # As a simple proxy: count sells with price > average buy price overall
+            avg_buy = (total_buy_cost / buy_count) if buy_count > 0 else 0
+            profitable_sells = sum(
+                1 for t in sells
+                if float(t["price_at_transaction"]) > avg_buy
+            )
+            win_rate = round((profitable_sells / sell_count) * 100, 1)
+
+        # ── 6. Monthly P&L (last 30 days) ───────────────────────────────────
+        import datetime as _dt2
+        thirty_days_ago = _dt2.datetime.now(_dt2.timezone.utc) - _dt2.timedelta(days=30)
+        monthly_txns = []
+        for t in all_txns:
+            try:
+                ts = _dt2.datetime.fromisoformat(t["executed_at"].replace("Z", "+00:00"))
+                if ts >= thirty_days_ago:
+                    monthly_txns.append(t)
+            except Exception:
+                pass
+
+        monthly_sell = sum(
+            float(t["price_at_transaction"]) * int(t["quantity"])
+            for t in monthly_txns if t["transaction_type"] == "SELL"
+        )
+        monthly_buy = sum(
+            float(t["price_at_transaction"]) * int(t["quantity"])
+            for t in monthly_txns if t["transaction_type"] == "BUY"
+        )
+        monthly_pnl = round(monthly_sell - monthly_buy, 2)
+
+        # Express monthly P&L as % of current balance (avoid div/0)
+        current_balance = float(db_user.get("virtual_balance", 100000))
+        monthly_pnl_pct = round((monthly_pnl / current_balance) * 100, 1) if current_balance else 0.0
+
         return {
-            "user_id": str(db_user.get("id"))[:13].upper(), # Shortened UI ID
+            "user_id": str(db_user.get("id"))[:13].upper(),
             "username": db_user.get("username", "Unknown Player"),
-            "email": f"{db_user.get('username', 'player').lower()}@tradesquad.io",
-            "lifetime_pnl": 452000, # Mock computed stats since we lack PnL resolution currently
-            "win_rate": 68.4,
-            "virtual_balance": float(db_user.get("virtual_balance", 0))
+            "email": real_email,
+            "virtual_balance": current_balance,
+            "member_since": member_since,
+            # Computed stats
+            "lifetime_pnl": lifetime_pnl,
+            "win_rate": win_rate,
+            "total_trades": total_trades,
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "monthly_pnl": monthly_pnl,
+            "monthly_pnl_pct": monthly_pnl_pct,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error fetching user stats: {e}")
         raise HTTPException(status_code=500, detail="Could not fetch user stats")
@@ -613,3 +714,101 @@ def get_single_asset(ticker: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/v1/ledger")
+def get_ledger(
+    page: int = 1,
+    page_size: int = 10,
+    user = Depends(get_current_user)
+):
+    """
+    Fetch the authenticated user's real transaction ledger from the DB.
+    Joins transactions with assets to get symbol/name. Returns paginated results
+    and aggregate stats (total trades, buy count, sell count, current balance).
+    """
+    try:
+        user_id = str(user.id)
+
+        # ── 1. Fetch ALL transactions for this user (newest first) ──────────
+        tx_res = (
+            supabase.table("transactions")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("executed_at", desc=True)
+            .execute()
+        )
+        all_txns = tx_res.data or []
+
+        # ── 2. Collect unique asset_ids and fetch asset metadata in one call ─
+        asset_ids = list({t["asset_id"] for t in all_txns if t.get("asset_id")})
+        assets_map = {}
+        if asset_ids:
+            asset_res = (
+                supabase.table("assets")
+                .select("id, symbol, name")
+                .in_("id", asset_ids)
+                .execute()
+            )
+            assets_map = {a["id"]: a for a in (asset_res.data or [])}
+
+        # ── 3. Build flat transaction list ───────────────────────────────────
+        def fmt_date(iso_str):
+            """Format ISO timestamp -> '24 MAR 2026' style."""
+            try:
+                from datetime import datetime as dt
+                d = dt.fromisoformat(iso_str.replace("Z", "+00:00"))
+                return d.strftime("%d %b %Y").upper()
+            except Exception:
+                return iso_str or ""
+
+        enriched = []
+        for t in all_txns:
+            asset = assets_map.get(t.get("asset_id"), {})
+            enriched.append({
+                "id": t.get("id"),
+                "action": t.get("transaction_type", "BUY"),
+                "asset": asset.get("symbol", "UNKNOWN"),
+                "asset_name": asset.get("name", "Unknown Asset"),
+                "price": float(t.get("price_at_transaction", 0)),
+                "quantity": int(t.get("quantity", 1)),
+                "date": fmt_date(t.get("executed_at", "")),
+                "executed_at": t.get("executed_at", ""),
+            })
+
+        # ── 4. Aggregate stats ───────────────────────────────────────────────
+        total_trades = len(enriched)
+        buy_count = sum(1 for t in enriched if t["action"] == "BUY")
+        sell_count = total_trades - buy_count
+
+        # ── 5. Fetch real current balance from users table ───────────────────
+        user_res = supabase.table("users").select("virtual_balance").eq("id", user_id).execute()
+        current_balance = float(user_res.data[0]["virtual_balance"]) if user_res.data else 0.0
+
+        # ── 6. Paginate ──────────────────────────────────────────────────────
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_data = enriched[start:end]
+        total_pages = max(1, -(-total_trades // page_size))  # ceiling division
+
+        return {
+            "transactions": page_data,
+            "stats": {
+                "total_trades": total_trades,
+                "buy_count": buy_count,
+                "sell_count": sell_count,
+                "current_balance": current_balance,
+            },
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_trades": total_trades,
+                "total_pages": total_pages,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching ledger: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load transaction ledger")
+
