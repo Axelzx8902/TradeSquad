@@ -79,12 +79,15 @@ def get_market_status():
 
 @router.get("/v1/market/live")
 def get_market_live():
-    """Fetch real-time NSE stock data via yfinance. Only useful when market is open."""
+    """Fetch real-time NSE stock data via yfinance.
+    Returns last-known close prices even when market is closed."""
     import yfinance as yf
 
-    # Pull symbols from Supabase assets table
+    market_open = is_market_open()
+
+    # Pull symbols from Supabase assets table (includes id for buy flow)
     try:
-        resp = supabase.table("assets").select("symbol, name, asset_class").execute()
+        resp = supabase.table("assets").select("id, symbol, name, asset_class, base_price").execute()
         db_assets = resp.data or []
     except Exception as e:
         logging.error(f"Supabase fetch error in live: {e}")
@@ -97,40 +100,61 @@ def get_market_live():
     symbols_map = {a["symbol"]: a for a in db_assets}
     tickers = [s + ".NS" for s in symbols_map.keys()]
 
+    results = []
+    yf_success = False
+
     try:
-        data = yf.download(tickers, period="2d", interval="1d", progress=False, auto_adjust=True)
-        closes = data["Close"] if "Close" in data else {}
+        data = yf.download(tickers, period="5d", interval="1d", progress=False, auto_adjust=True)
+        if "Close" in data.columns.get_level_values(0):
+            closes = data["Close"]
+            yf_success = True
     except Exception as e:
         logging.error(f"yfinance error: {e}")
-        raise HTTPException(status_code=502, detail="yfinance data unavailable")
+        yf_success = False
 
-    results = []
     for sym, meta in symbols_map.items():
         ticker_key = sym + ".NS"
-        try:
-            prices = closes[ticker_key].dropna()
-            if len(prices) < 2:
-                continue
-            prev_close = float(prices.iloc[-2])
-            last_price = float(prices.iloc[-1])
-            change_pct = round(((last_price - prev_close) / prev_close) * 100, 2)
-            results.append({
-                "id": None,
-                "symbol": sym,
-                "ticker_symbol": sym,
-                "name": meta.get("name", sym),
-                "asset_name": meta.get("name", sym),
-                "asset_class": meta.get("asset_class", "LARGE-CAP"),
-                "asset_class_id": meta.get("asset_class", "LARGE-CAP"),
-                "current_price": round(last_price, 2),
-                "change_percent": change_pct,
-                "is_positive": change_pct > 0,
-                "required_lesson_id": None
-            })
-        except Exception:
-            continue  # Skip assets with no yfinance data gracefully
+        asset_id = meta.get("id")
+        asset_name = meta.get("name", sym)
+        asset_class = meta.get("asset_class", "LARGE-CAP")
+        base_price = float(meta.get("base_price", 0))
 
-    return {"assets": results, "source": "yfinance", "is_live": True}
+        last_price = base_price
+        change_pct = 0.0
+
+        if yf_success:
+            try:
+                prices = closes[ticker_key].dropna()
+                if len(prices) >= 2:
+                    prev_close = float(prices.iloc[-2])
+                    last_price = float(prices.iloc[-1])
+                    change_pct = round(((last_price - prev_close) / prev_close) * 100, 2)
+                elif len(prices) == 1:
+                    last_price = float(prices.iloc[-1])
+                    change_pct = 0.0
+            except Exception:
+                pass  # Fallback to base_price already set
+
+        results.append({
+            "id": asset_id,
+            "symbol": sym,
+            "ticker_symbol": sym,
+            "name": asset_name,
+            "asset_name": asset_name,
+            "asset_class": asset_class,
+            "asset_class_id": asset_class,
+            "current_price": round(last_price, 2),
+            "change_percent": change_pct,
+            "is_positive": change_pct > 0,
+            "required_lesson_id": None
+        })
+
+    return {
+        "assets": results,
+        "source": "yfinance",
+        "is_live": True,
+        "is_market_open": market_open
+    }
 
 @router.websocket("/ws/market/scout")
 async def websocket_market_scout(websocket: WebSocket):

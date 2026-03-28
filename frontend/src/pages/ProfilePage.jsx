@@ -13,6 +13,8 @@ export default function ProfilePage() {
     const next = !liveDataMode;
     setLiveDataMode(next);
     localStorage.setItem('tradesquad_data_mode', next ? 'live' : 'demo');
+    // Dispatch custom event so Marketplace picks up the change reactively
+    window.dispatchEvent(new CustomEvent('tradesquad_mode_change', { detail: { live: next } }));
   };
 
   const { profile, isLoading, error, fetchProfile } = useUserStore();

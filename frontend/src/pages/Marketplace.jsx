@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Lock, TrendingUp, TrendingDown, X } from 'lucide-react';
+import { Search, Lock, TrendingUp, TrendingDown, X, Clock, Radio, Wifi, WifiOff } from 'lucide-react';
 import CoachAlert from '../components/CoachAlert';
 import { buyAsset } from '../api';
 
@@ -14,44 +14,86 @@ export default function ScoutMarketplace() {
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [buyQty, setBuyQty]         = useState(1);
   const [scoutAssets, setScoutAssets] = useState([]);
+  const [liveLoading, setLiveLoading] = useState(false);
 
   const [marketStatus, setMarketStatus]   = useState(null); // null = loading
-  const isLiveMode = localStorage.getItem('tradesquad_data_mode') === 'live';
+  const [isLiveMode, setIsLiveMode] = useState(() => {
+    return localStorage.getItem('tradesquad_data_mode') === 'live';
+  });
 
-  const mapAssets = (raw) => (raw || []).map((a) => ({
+  // Listen for toggle changes from ProfilePage
+  useEffect(() => {
+    const handleModeChange = (e) => {
+      setIsLiveMode(e.detail?.live ?? false);
+    };
+    window.addEventListener('tradesquad_mode_change', handleModeChange);
+    return () => window.removeEventListener('tradesquad_mode_change', handleModeChange);
+  }, []);
+
+  const mapAssets = useCallback((raw) => (raw || []).map((a) => ({
     id:       a.id,
-    name:     a.asset_name,
-    ticker:   a.ticker_symbol,
+    name:     a.asset_name || a.name,
+    ticker:   a.ticker_symbol || a.symbol,
     price:    Number(a.current_price),
-    category: a.asset_class_id || (Number(a.current_price) > 2000 ? 'LARGE-CAP' : 'MID-CAP'),
+    category: a.asset_class_id || a.asset_class || (Number(a.current_price) > 2000 ? 'LARGE-CAP' : 'MID-CAP'),
     change:   Number(a.change_percent),
     pe:       (Math.random() * 30 + 10).toFixed(1) + 'x',
     mktCap:   '₹' + (Math.random() * 10 + 1).toFixed(1) + 'L Cr',
     vol:      Math.floor(Math.random() * 800 + 100) + 'K',
     sector:   'EQUITIES',
     locked:   !!a.required_lesson_id
-  }));
+  })), []);
 
-  // Step 1: always check market status on mount
+  // Step 1: always check market status on mount and when mode changes
   useEffect(() => {
     const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
     fetch(`${baseUrl}/v1/market/status`)
       .then(r => r.json())
       .then(setMarketStatus)
       .catch(() => setMarketStatus({ is_open: false, reason: 'Could not reach server' }));
-  }, []);
+  }, [isLiveMode]);
 
   // Step 2: wire data source based on mode
   useEffect(() => {
     const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 
     if (isLiveMode) {
-      // ─── LIVE MODE: single REST call to yfinance endpoint ───────────────
+      // ─── LIVE MODE: REST call to yfinance endpoint ───────────────
+      setLiveLoading(true);
       fetch(`${baseUrl}/v1/market/live`)
         .then(r => r.json())
-        .then(data => setScoutAssets(mapAssets(data.assets)))
-        .catch(err => console.error('Live data fetch error:', err));
-      return; // no cleanup needed for fetch
+        .then(data => {
+          setScoutAssets(mapAssets(data.assets));
+          // Update market status from live response too
+          if (data.is_market_open !== undefined) {
+            setMarketStatus(prev => ({ ...prev, is_open: data.is_market_open }));
+          }
+          setLiveLoading(false);
+        })
+        .catch(err => {
+          console.error('Live data fetch error:', err);
+          setLiveLoading(false);
+          // Fallback: load demo data so the page isn't empty
+          fetch(`${baseUrl}/v1/market/scout`)
+            .then(r => r.json())
+            .then(data => setScoutAssets(mapAssets(data.assets)))
+            .catch(() => {});
+        });
+
+      // If market is open, poll every 30s for fresh prices
+      const interval = setInterval(() => {
+        fetch(`${baseUrl}/v1/market/live`)
+          .then(r => r.json())
+          .then(data => {
+            setScoutAssets(mapAssets(data.assets));
+            if (data.is_market_open !== undefined) {
+              setMarketStatus(prev => ({ ...prev, is_open: data.is_market_open }));
+            }
+          })
+          .catch(() => {});
+      }, 30000);
+
+      return () => clearInterval(interval);
     }
 
     // ─── DEMO MODE: persistent WebSocket with Weekend Simulator ─────────
@@ -69,7 +111,7 @@ export default function ScoutMarketplace() {
 
     ws.onerror = (err) => console.error('WebSocket error:', err);
     return () => ws.close();
-  }, [isLiveMode]);
+  }, [isLiveMode, mapAssets]);
 
 
   const filtered = useMemo(() => {
@@ -116,6 +158,8 @@ export default function ScoutMarketplace() {
       });
     }
   };
+
+  const marketClosed = isLiveMode && marketStatus && !marketStatus.is_open;
 
   return (
     <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen">
@@ -230,11 +274,67 @@ export default function ScoutMarketplace() {
 
       {/* ── HEADER ── */}
       <div className="mb-6">
-        <h1 className="text-4xl md:text-5xl font-black uppercase tracking-tighter leading-none">The Scout Marketplace</h1>
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+          <h1 className="text-4xl md:text-5xl font-black uppercase tracking-tighter leading-none">The Scout Marketplace</h1>
+          
+          {/* Live / Demo Mode Badge */}
+          {isLiveMode ? (
+            <div className="flex items-center gap-2 bg-[#be2d06] text-white border-4 border-black px-4 py-2 shadow-[4px_4px_0px_0px_#000] shrink-0" style={{ transform: 'rotate(1deg)' }}>
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+              </span>
+              <span className="font-black text-xs uppercase tracking-widest">Live — NSE via yfinance</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-[#44443f] text-white border-4 border-black px-4 py-2 shadow-[4px_4px_0px_0px_#000] shrink-0" style={{ transform: 'rotate(1deg)' }}>
+              <Wifi size={14} />
+              <span className="font-black text-xs uppercase tracking-widest">Demo — Weekend Simulator</span>
+            </div>
+          )}
+        </div>
+
         <div className="bg-[#b6353a] text-white border-4 border-black p-3 shadow-[4px_4px_0px_0px_#000] mt-4 inline-block" style={{ transform: 'rotate(-0.5deg)' }}>
           <p className="font-bold text-sm uppercase">Master the art of media literacy. Can you tell the hype from the hard truth?</p>
         </div>
       </div>
+
+      {/* ── MARKET CLOSED BANNER ── */}
+      {marketClosed && (
+        <div className="mb-6 bg-[#1b1b1b] text-white border-4 border-[#fad538] p-5 shadow-[6px_6px_0px_0px_#fad538] relative overflow-hidden" style={{ transform: 'rotate(-0.3deg)' }}>
+          <div className="absolute top-0 right-0 w-32 h-32 bg-[#fad538] opacity-5 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div className="bg-[#fad538] text-black border-4 border-black p-3 shadow-[3px_3px_0px_0px_#000] shrink-0" style={{ transform: 'rotate(-2deg)' }}>
+              <Clock size={28} strokeWidth={3} />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-1">
+                <h3 className="font-black text-lg uppercase tracking-tight">Market Closed</h3>
+                <span className="bg-[#fad538] text-black text-[9px] font-black uppercase px-2 py-0.5 border-2 border-black tracking-widest">
+                  {marketStatus?.is_open === false && marketStatus?.reason?.includes('Weekend') ? 'WEEKEND' : 'AFTER HOURS'}
+                </span>
+              </div>
+              <p className="text-sm font-bold text-[#bab9b2]">
+                {marketStatus?.reason || 'Markets open Mon-Fri 9:15 AM – 3:30 PM IST'}
+              </p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#fad538] mt-2">
+                📊 Showing last traded prices from NSE • {marketStatus?.current_ist || ''}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── LIVE LOADING STATE ── */}
+      {liveLoading && (
+        <div className="mb-6 bg-white border-4 border-black p-6 shadow-[4px_4px_0px_0px_#000] flex items-center gap-4">
+          <div className="w-8 h-8 border-4 border-black border-t-transparent rounded-full animate-spin"></div>
+          <div>
+            <p className="font-black uppercase text-sm">Fetching live NSE data...</p>
+            <p className="text-[10px] font-bold text-[#65655f] uppercase tracking-widest mt-1">Connecting to yfinance • This may take a few seconds</p>
+          </div>
+        </div>
+      )}
 
       {/* ── SEARCH BAR ── */}
       <div className="relative mb-6">
@@ -301,23 +401,27 @@ export default function ScoutMarketplace() {
                 const rot = (Math.random() * 1.2 - 0.6).toFixed(2);
                 return (
                   <div
-                    key={asset.id}
+                    key={asset.id || asset.ticker}
                     onClick={() => handleCardClick(asset)}
                     className={`border-4 border-black shadow-[4px_4px_0px_0px_#000] hover:shadow-[8px_8px_0px_0px_#000] hover:-translate-y-1 transition-all cursor-pointer bg-white ${locked ? 'opacity-75' : ''}`}
                     style={{ transform: `rotate(${rot}deg)` }}
                   >
                     {/* Tab header */}
-                    <div className={`border-b-4 border-black px-4 py-2 flex justify-between items-center ${locked ? 'bg-[#e9e9de]' : 'bg-[#c3b4fc]'}`}>
+                    <div className={`border-b-4 border-black px-4 py-2 flex justify-between items-center ${locked ? 'bg-[#e9e9de]' : isLiveMode ? 'bg-[#fce4e4]' : 'bg-[#c3b4fc]'}`}>
                       <span className="font-black text-xs uppercase tracking-wider">{asset.ticker}</span>
                       {locked
                         ? <span className="text-[10px] font-black bg-[#be2d06] text-white border border-black px-1.5 py-0.5 flex items-center gap-1"><Lock size={9} /> LOCKED</span>
-                        : <span className="text-[10px] font-bold text-[#65655f] uppercase">{asset.sector}</span>
+                        : isLiveMode 
+                          ? <span className="text-[10px] font-bold text-[#be2d06] uppercase flex items-center gap-1"><Radio size={9} /> NSE</span>
+                          : <span className="text-[10px] font-bold text-[#65655f] uppercase">{asset.sector}</span>
                       }
                     </div>
                     {/* Body */}
                     <div className="p-4">
                       <h3 className="font-black text-sm uppercase leading-tight mb-3">{asset.name}</h3>
-                      <p className="text-[9px] font-black uppercase text-[#65655f] tracking-widest mb-1">LTP</p>
+                      <p className="text-[9px] font-black uppercase text-[#65655f] tracking-widest mb-1">
+                        {isLiveMode ? (marketClosed ? 'PREV CLOSE' : 'LTP') : 'LTP'}
+                      </p>
                       <div className="flex justify-between items-end">
                         <p className="text-xl font-black">₹{asset.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
                         <span className={`font-black text-sm flex items-center gap-0.5 ${isNeg ? 'text-[#be2d06]' : 'text-green-700'}`}>

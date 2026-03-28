@@ -58,6 +58,16 @@ export const fetchUserProfileStats = async () => {
     return res.data;
 };
 
+export const fetchMarketLive = async () => {
+    const res = await api.get(`/v1/market/live`);
+    return res.data;
+};
+
+export const fetchMarketStatus = async () => {
+    const res = await api.get(`/v1/market/status`);
+    return res.data;
+};
+
 export const buyAsset = async (assetId, quantity = 1) => {
     const res = await api.post(`/buy`, {
         asset_id: assetId,
