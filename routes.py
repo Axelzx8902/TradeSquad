@@ -156,6 +156,38 @@ def get_market_live():
         "is_market_open": market_open
     }
 
+@router.get("/v1/market/candles/{ticker}")
+def get_candle_data(ticker: str):
+    """Fetch 5-day intraday (15 min) OHLC candle data for a given NSE ticker via yfinance."""
+    import yfinance as yf
+
+    # Auto-append .NS for Indian stocks if not already present
+    symbol = ticker.strip().upper()
+    if not symbol.endswith(".NS") and not symbol.endswith(".BO"):
+        symbol = symbol + ".NS"
+
+    try:
+        tk = yf.Ticker(symbol)
+        df = tk.history(period="5d", interval="15m")
+    except Exception as e:
+        logging.error(f"yfinance candle error for {symbol}: {e}")
+        raise HTTPException(status_code=502, detail=f"Could not fetch data for {symbol}")
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail=f"No candle data returned for {symbol}")
+
+    candles = []
+    for ts, row in df.iterrows():
+        candles.append({
+            "timestamp": int(ts.timestamp() * 1000),  # epoch ms for JS
+            "open": round(float(row["Open"]), 2),
+            "high": round(float(row["High"]), 2),
+            "low": round(float(row["Low"]), 2),
+            "close": round(float(row["Close"]), 2),
+        })
+
+    return {"symbol": symbol, "candles": candles}
+
 @router.websocket("/ws/market/scout")
 async def websocket_market_scout(websocket: WebSocket):
     """Live streaming endpoint pumping prices to the UI."""

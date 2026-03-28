@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Lock, TrendingUp, TrendingDown, X, Clock, Radio, Wifi, WifiOff } from 'lucide-react';
 import CoachAlert from '../components/CoachAlert';
+import DemoStockChart from '../components/DemoStockChart';
 import { buyAsset } from '../api';
 
 const CATEGORIES = ['All', 'LARGE-CAP', 'MID-CAP', 'BONDS'];
@@ -15,6 +16,10 @@ export default function ScoutMarketplace() {
   const [buyQty, setBuyQty]         = useState(1);
   const [scoutAssets, setScoutAssets] = useState([]);
   const [liveLoading, setLiveLoading] = useState(false);
+  const [candleData, setCandleData] = useState([]);
+  const [candleLoading, setCandleLoading] = useState(false);
+  const [livePrice, setLivePrice] = useState(null);
+  const [liveChange, setLiveChange] = useState(null);
 
   const [marketStatus, setMarketStatus]   = useState(null); // null = loading
   const [isLiveMode, setIsLiveMode] = useState(() => {
@@ -143,6 +148,33 @@ export default function ScoutMarketplace() {
     }
     setSelectedAsset(asset);
     setBuyQty(1);
+    setCandleData([]);
+    setLivePrice(null);
+    setLiveChange(null);
+
+    // Fetch candle data for this ticker
+    if (asset.ticker) {
+      setCandleLoading(true);
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+      fetch(`${baseUrl}/v1/market/candles/${asset.ticker}`)
+        .then(r => r.json())
+        .then(data => {
+          const candles = data.candles || [];
+          setCandleData(candles);
+          if (candles.length >= 2) {
+            const lastClose = candles[candles.length - 1].close;
+            const prevClose = candles[0].open;
+            const changePct = ((lastClose - prevClose) / prevClose * 100).toFixed(2);
+            setLivePrice(lastClose);
+            setLiveChange(parseFloat(changePct));
+          } else if (candles.length === 1) {
+            setLivePrice(candles[0].close);
+            setLiveChange(0);
+          }
+          setCandleLoading(false);
+        })
+        .catch(() => setCandleLoading(false));
+    }
   };
 
   const handleBuy = async () => {
@@ -160,6 +192,10 @@ export default function ScoutMarketplace() {
   };
 
   const marketClosed = isLiveMode && marketStatus && !marketStatus.is_open;
+
+  // Derive display price: prefer live candle data if loaded, else fallback to card data
+  const modalPrice = livePrice ?? selectedAsset?.price ?? 0;
+  const modalChange = liveChange ?? selectedAsset?.change ?? 0;
 
   return (
     <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen">
@@ -187,39 +223,36 @@ export default function ScoutMarketplace() {
               </button>
             </div>
 
-            {/* Price */}
+            {/* Price — uses live yfinance data when available */}
             <div className="px-5 py-4 border-b-4 border-black flex items-end justify-between">
               <div>
-                <p className="text-[10px] font-black uppercase text-[#65655f] tracking-widest">LTP</p>
-                <p className="text-4xl font-black">₹{selectedAsset.price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="text-[10px] font-black uppercase text-[#65655f] tracking-widest flex items-center gap-1">
+                  {livePrice ? '● LIVE' : 'LTP'}
+                  <span className="text-[#bab9b2] ml-1">{selectedAsset.ticker}.NS</span>
+                </p>
+                <p className="text-4xl font-black">₹{modalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
-              <span className={`font-black text-xl flex items-center gap-1 ${selectedAsset.change < 0 ? 'text-[#be2d06]' : 'text-green-700'}`}>
-                {selectedAsset.change < 0 ? <TrendingDown size={18} /> : <TrendingUp size={18} />}
-                {selectedAsset.change > 0 ? '+' : ''}{selectedAsset.change}%
+              <span className={`font-black text-xl flex items-center gap-1 ${modalChange < 0 ? 'text-[#be2d06]' : 'text-green-700'}`}>
+                {modalChange < 0 ? <TrendingDown size={18} /> : <TrendingUp size={18} />}
+                {modalChange > 0 ? '+' : ''}{modalChange}%
               </span>
             </div>
 
-            {/* Candlestick Chart Mock */}
-            <div className="border-b-4 border-black p-4 bg-white relative h-40">
-              <p className="absolute top-2 left-2 text-[9px] font-black uppercase tracking-widest text-[#bab9b2]">1D • Market Trend</p>
-              <div className="w-full h-full flex items-end justify-between gap-1 mt-4 px-2">
-                {[...Array(15)].map((_, i) => {
-                  const isBullish = Math.random() > 0.4;
-                  const h = Math.random() * 60 + 20; // body height
-                  const w = Math.random() * 20 + 5;  // wick height above/below
-                  return (
-                    <div key={i} className="relative flex flex-col items-center flex-1 justify-end h-full">
-                      {/* Wick */}
-                      <div className="w-1 bg-[#bab9b2]" style={{ height: (h + w * 2) + '%', position: 'absolute', bottom: (Math.random() * 20) + '%' }}></div>
-                      {/* Body */}
-                      <div 
-                        className={'w-full z-10 border-2 border-black ' + (isBullish ? 'bg-green-400' : 'bg-[#be2d06]')} 
-                        style={{ height: h + '%', marginBottom: (Math.random() * 20 + w) + '%' }}
-                      ></div>
-                    </div>
-                  );
-                })}
-              </div>
+            {/* Candlestick Chart — DemoStockChart component */}
+            <div className="border-b-4 border-black p-3 bg-white h-52">
+              {candleLoading ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="w-6 h-6 border-4 border-black border-t-transparent rounded-full animate-spin"></div>
+                  <span className="ml-3 font-black text-xs uppercase text-[#bab9b2] tracking-widest">Fetching chart...</span>
+                </div>
+              ) : (
+                <DemoStockChart
+                  candles={candleData}
+                  ticker={selectedAsset.ticker}
+                  demoMode={!isLiveMode}
+                  maxBars={30}
+                />
+              )}
             </div>
 
             {/* Stats grid */}
@@ -259,7 +292,7 @@ export default function ScoutMarketplace() {
               </div>
               <div className="bg-[#fad538] border-4 border-black p-3 flex justify-between items-center mb-4 shadow-[4px_4px_0px_0px_#000]">
                 <p className="text-[10px] font-black uppercase tracking-widest">Total Cost</p>
-                <p className="font-black text-lg">₹{(selectedAsset.price * buyQty).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="font-black text-lg">₹{(modalPrice * buyQty).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
               <button
                 onClick={handleBuy}
