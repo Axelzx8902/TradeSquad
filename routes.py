@@ -15,6 +15,19 @@ class BuyAssetRequest(BaseModel):
 import random
 import datetime
 import pytz
+import os
+import google.generativeai as genai
+
+# Configure Google Generative AI
+api_key = os.environ.get("GEMINI_API_KEY")
+if api_key:
+    genai.configure(api_key=api_key)
+
+class CoachAnalyzeRequest(BaseModel):
+    ticker: str
+    trade_action: str
+    percentage_of_portfolio: float
+    current_cash: float
 
 # ── Market Hours Helper ──────────────────────────────────────────────────────
 INDIA_TZ = pytz.timezone("Asia/Kolkata")
@@ -811,4 +824,44 @@ def get_ledger(
     except Exception as e:
         logging.error(f"Error fetching ledger: {e}")
         raise HTTPException(status_code=500, detail="Failed to load transaction ledger")
+
+@router.post("/coach/analyze")
+def coach_analyze(payload: CoachAnalyzeRequest):
+    """
+    AI Coach endpoint. The Sergeant analyzes the latest trade.
+    """
+    if not api_key:
+        return {"coach_message": "Listen here rookie, you haven't wired up my comms (GEMINI_API_KEY missing)!"}
+    
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash-lite')
+        
+        system_instructions = (
+            "You are 'The Sergeant', a gritty, gamified, slightly aggressive trading mentor in a brutalist retro trading app. "
+            "Analyze the latest trade action the user just made. "
+            "You must respond in a maximum of two short sentences. "
+            "Be punchy, highly contextual to the exact math provided, and heavily gamified."
+        )
+        
+        prompt = (
+            f"{system_instructions}\n\n"
+            f"User Trade Details:\n"
+            f"- Action: {payload.trade_action.upper()}\n"
+            f"- Ticker: {payload.ticker}\n"
+            f"- Percentage of Portfolio used/gained: {payload.percentage_of_portfolio}%\n"
+            f"- Current Cash Available: ₹{payload.current_cash}\n\n"
+            f"Sergeant, give me your assessment:"
+        )
+
+        response = model.generate_content(prompt)
+        coach_message = response.text.strip()
+        
+        if not coach_message:
+            coach_message = "A quiet trade is better than a stupid one. Move along."
+            
+        return {"coach_message": coach_message}
+    except Exception as e:
+        logging.error(f"Coach analyze error: {e}")
+        # Return 200 with a fallback message so the frontend UI doesn't break
+        return {"coach_message": "The Sergeant's comms are jammed right now. Keep your head down and keep trading."}
 

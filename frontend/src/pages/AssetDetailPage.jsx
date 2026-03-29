@@ -2,22 +2,43 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, Users } from 'lucide-react';
 import CoachAlert from '../components/CoachAlert';
-import { buyAsset, sellAsset, fetchAssetByTicker } from '../api';
+import DemoStockChart from '../components/DemoStockChart';
+import api, { buyAsset, sellAsset, fetchAssetByTicker } from '../api';
 import useUserStore from '../store/userStore';
+import usePortfolioStore from '../store/portfolioStore';
 
-const TIME_PERIODS = ['1D', '1W', '1M', '3M', '1Y', 'ALL'];
+const TIME_PERIODS = ['5D'];
 
 export default function AssetDetailPage() {
   const { ticker } = useParams();
   const navigate = useNavigate();
   const { updateBalance } = useUserStore();
+  const { portfolio, fetchData: fetchPortfolio } = usePortfolioStore();
   
   const [asset, setAsset] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [selectedPeriod, setSelectedPeriod] = useState('1M');
+  const [selectedPeriod, setSelectedPeriod] = useState('5D');
   const [quantity, setQuantity] = useState(1);
   const [coachAlert, setCoachAlert] = useState(null);
   const [squadRole, setSquadRole] = useState('');
+  
+  // New state for AI Coach
+  const [coachMessage, setCoachMessage] = useState(null);
+  const [isTrading, setIsTrading] = useState(false);
+
+  // States for Chart
+  const [candleData, setCandleData] = useState([]);
+  const [candleLoading, setCandleLoading] = useState(false);
+  const [isLiveMode, setIsLiveMode] = useState(() => {
+    return localStorage.getItem('tradesquad_data_mode') === 'live';
+  });
+
+  // Listen for Live toggle changes
+  useEffect(() => {
+    const handleModeChange = (e) => setIsLiveMode(e.detail?.live ?? false);
+    window.addEventListener('tradesquad_mode_change', handleModeChange);
+    return () => window.removeEventListener('tradesquad_mode_change', handleModeChange);
+  }, []);
 
   useEffect(() => {
     const getAsset = async () => {
@@ -34,35 +55,91 @@ export default function AssetDetailPage() {
         setLoading(false);
       }
     };
+
+    const getCandleData = async () => {
+      setCandleLoading(true);
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+      fetch(`${baseUrl}/v1/market/candles/${ticker}`)
+        .then(r => r.json())
+        .then(data => {
+          setCandleData(data.candles || []);
+          setCandleLoading(false);
+        })
+        .catch(() => setCandleLoading(false));
+    };
+
     if (ticker) {
       getAsset();
+      getCandleData();
     }
   }, [ticker]);
 
+  useEffect(() => {
+    if (portfolio.length === 0) {
+      fetchPortfolio();
+    }
+  }, [portfolio.length, fetchPortfolio]);
+
+  const ownedQty = portfolio.find(p => p.ticker === ticker)?.quantity || 0;
+
   const handleBuy = async () => {
+    setIsTrading(true);
     try {
       const res = await buyAsset(ticker, quantity);
       if (res.new_balance) updateBalance(res.new_balance);
-      navigate('/');
+      
+      const tradeValue = asset.price * quantity;
+      const total = res.new_balance + tradeValue;
+      const pct = total > 0 ? (tradeValue / total) * 100 : 0;
+
+      const coachRes = await api.post('/coach/analyze', {
+        ticker: ticker,
+        trade_action: 'buy',
+        percentage_of_portfolio: parseFloat(pct.toFixed(2)),
+        current_cash: res.new_balance
+      });
+      setCoachMessage(coachRes.data.coach_message);
     } catch (err) {
       setCoachAlert({
         title: 'Trade Failed', 
         message: err.response?.data?.detail || 'Insufficient balance or server error.'
       });
+    } finally {
+      setIsTrading(false);
     }
   };
 
   const handleSell = async () => {
+    setIsTrading(true);
     try {
       const res = await sellAsset(ticker, quantity);
       if (res.new_balance) updateBalance(res.new_balance);
-      navigate('/');
+
+      const tradeValue = asset.price * quantity;
+      // For a sell, they just gained cash, so total before sell was approx new_balance - tradeValue
+      const total = Math.max(res.new_balance, tradeValue);
+      const pct = total > 0 ? (tradeValue / total) * 100 : 0;
+
+      const coachRes = await api.post('/coach/analyze', {
+        ticker: ticker,
+        trade_action: 'sell',
+        percentage_of_portfolio: parseFloat(pct.toFixed(2)),
+        current_cash: res.new_balance
+      });
+      setCoachMessage(coachRes.data.coach_message);
     } catch (err) {
       setCoachAlert({
         title: 'Trade Failed',
         message: err.response?.data?.detail || 'You do not own enough of this asset or server error.'
       });
+    } finally {
+      setIsTrading(false);
     }
+  };
+
+  const handleDismissCoach = () => {
+    setCoachMessage(null);
+    navigate('/');
   };
 
   if (loading) {
@@ -85,17 +162,38 @@ export default function AssetDetailPage() {
   const isPositive = asset.change >= 0;
 
   return (
-    <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen bg-[#fefcf4]">
+    <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen bg-[#fefcf4] relative">
+      {/* ── AI COACH MODAL (SERGEANT) ── */}
+      {coachMessage && (
+        <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4">
+          <div className="bg-[#fad538] border-8 border-black shadow-[16px_16px_0px_0px_#000] max-w-xl w-full p-8" style={{ transform: 'rotate(-1deg)' }}>
+            <h2 className="text-4xl font-black uppercase tracking-tighter mb-2 border-b-8 border-black pb-2 text-black">The Sergeant Says:</h2>
+            <p className="text-2xl font-black leading-tight text-black mt-6 mb-8 uppercase">
+              "{coachMessage}"
+            </p>
+            <button 
+              onClick={handleDismissCoach}
+              className="w-full bg-black text-white font-black uppercase py-4 text-xl border-4 border-black shadow-[4px_4px_0px_0px_#fff] hover:translate-y-1 hover:translate-x-1 hover:shadow-none transition-all cursor-pointer"
+            >
+              DISMISS AND RETURN
+            </button>
+          </div>
+        </div>
+      )}
+
       {coachAlert && <CoachAlert title={coachAlert.title} message={coachAlert.message} onDismiss={() => setCoachAlert(null)} />}
 
       {/* Back + Header */}
-      <button onClick={() => navigate(-1)} className="bg-white border-4 border-black font-black uppercase text-sm px-4 py-2 shadow-[4px_4px_0px_0px_#000] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all mb-6 cursor-pointer">
+      <button onClick={() => navigate(-1)} className="bg-white border-4 border-black font-black uppercase text-sm px-4 py-2 shadow-[4px_4px_0px_0px_#000] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all mb-6 cursor-pointer disabled:opacity-50" disabled={isTrading}>
         ← Back
       </button>
 
       <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 gap-4">
         <div>
-          <p className="text-xs font-bold uppercase text-[#65655f] tracking-widest">NSE: {ticker} | {asset.status}</p>
+          <p className="text-xs font-bold uppercase text-[#65655f] tracking-widest flex items-center gap-2">
+            <span>NSE: {ticker} | {asset.status}</span>
+            {ownedQty > 0 && <span className="bg-[#fad538] text-black px-2 py-0.5 border-2 border-black">YOU OWN: {ownedQty}</span>}
+          </p>
           <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tighter">{asset.name}</h1>
         </div>
         <div className="text-right">
@@ -125,7 +223,7 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
-      {/* Chart Area Placeholder */}
+      {/* Chart Area */}
       <div className="bg-white border-4 border-black shadow-[4px_4px_0px_0px_#000] mb-6">
         <div className="flex gap-2 p-3 border-b-4 border-black flex-wrap">
           {TIME_PERIODS.map(p => (
@@ -142,10 +240,24 @@ export default function AssetDetailPage() {
             </button>
           ))}
         </div>
-        <div className="h-48 flex items-center justify-center p-6">
-          <div className="w-full h-full bg-gradient-to-r from-[#c3b4fc]/30 via-[#fad538]/20 to-[#ff7574]/30 border-2 border-dashed border-[#81817a] flex items-center justify-center">
-            <span className="font-bold uppercase text-[#81817a] text-sm">Candlestick Chart • {selectedPeriod} View</span>
-          </div>
+        <div className="h-64 p-3 relative">
+          {candleLoading ? (
+            <div className="w-full h-full flex flex-col items-center justify-center">
+              <div className="w-8 h-8 border-4 border-black border-t-transparent rounded-full animate-spin"></div>
+              <span className="mt-3 font-black text-xs uppercase tracking-widest text-[#bab9b2]">Fetching Chart...</span>
+            </div>
+          ) : candleData.length > 0 ? (
+            <DemoStockChart
+              candles={candleData}
+              ticker={ticker}
+              demoMode={!isLiveMode}
+              maxBars={30}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center border-2 border-dashed border-[#81817a]">
+              <span className="font-bold uppercase text-[#81817a] text-sm">No chart data available</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -165,11 +277,11 @@ export default function AssetDetailPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
             <label className="text-xs font-black uppercase tracking-widest block mb-2">Quantity</label>
-            <input type="number" min="1" value={quantity} onChange={e => setQuantity(parseInt(e.target.value) || 1)} className="w-full bg-[#fefcf4] border-4 border-black p-3 font-bold focus:bg-[#fad538] focus:outline-none transition-colors" />
+            <input type="number" min="1" value={quantity} onChange={e => setQuantity(parseInt(e.target.value) || 1)} className="w-full bg-[#fefcf4] border-4 border-black p-3 font-bold focus:bg-[#fad538] focus:outline-none transition-colors" disabled={isTrading} />
           </div>
           <div>
             <label className="text-xs font-black uppercase tracking-widest block mb-2">Assign Squad Role</label>
-            <select value={squadRole} onChange={e => setSquadRole(e.target.value)} className="w-full bg-[#fefcf4] border-4 border-black p-3 font-bold focus:bg-[#fad538] focus:outline-none transition-colors appearance-none">
+            <select value={squadRole} onChange={e => setSquadRole(e.target.value)} className="w-full bg-[#fefcf4] border-4 border-black p-3 font-bold focus:bg-[#fad538] focus:outline-none transition-colors appearance-none" disabled={isTrading}>
               <option value="">Select Role...</option>
               <option>Aggressive Opener</option>
               <option>Dependable No.3</option>
@@ -185,11 +297,11 @@ export default function AssetDetailPage() {
         </div>
 
         <div className="flex gap-3">
-          <button onClick={handleBuy} className="flex-1 bg-[#b6353a] text-white border-4 border-black font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] hover:shadow-[8px_8px_0px_0px_#000] hover:-translate-y-1 active:shadow-none active:translate-y-1 transition-all cursor-pointer">
-            Buy Asset
+          <button onClick={handleBuy} disabled={isTrading} className="flex-1 bg-[#b6353a] text-white border-4 border-black font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] hover:shadow-[8px_8px_0px_0px_#000] hover:-translate-y-1 active:shadow-none active:translate-y-1 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {isTrading ? 'Awaiting Comm...' : 'Buy Asset'}
           </button>
-          <button onClick={handleSell} className="flex-1 bg-white border-4 border-black font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] active:shadow-none active:translate-y-1 transition-all cursor-pointer text-[#65655f] hover:text-[#be2d06]">
-            Sell Asset
+          <button onClick={handleSell} disabled={isTrading} className="flex-1 bg-white border-4 border-black font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] active:shadow-none active:translate-y-1 transition-all cursor-pointer text-[#65655f] hover:text-[#be2d06] disabled:opacity-50 disabled:cursor-not-allowed">
+            {isTrading ? 'Awaiting Comm...' : 'Sell Asset'}
           </button>
         </div>
       </div>

@@ -28,6 +28,7 @@ const usePortfolioStore = create((set) => ({
                     ticker: item.assets?.symbol || item.assets?.ticker_symbol || 'UNK',
                     price: currentPrice,
                     change: parseFloat(changePercent.toFixed(2)),
+                    quantity: item.quantity || 0,
                     // Mocking standard Brutalist role assignment
                     role: 'AGGRESSIVE OPENER'
                 };

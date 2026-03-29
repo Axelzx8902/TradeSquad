@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { Search, Lock, TrendingUp, TrendingDown, X, Clock, Radio, Wifi, WifiOff } from 'lucide-react';
 import CoachAlert from '../components/CoachAlert';
 import DemoStockChart from '../components/DemoStockChart';
-import { buyAsset } from '../api';
+import api, { buyAsset } from '../api';
+import useUserStore from '../store/userStore';
 
 const CATEGORIES = ['All', 'LARGE-CAP', 'MID-CAP', 'BONDS'];
 
@@ -12,6 +13,9 @@ export default function ScoutMarketplace() {
   const [activeCategory, setActive] = useState('All');
   const [coachAlert, setCoachAlert] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
+  const { updateBalance } = useUserStore();
+  const [coachMessage, setCoachMessage] = useState(null);
+  const [isTrading, setIsTrading] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [buyQty, setBuyQty]         = useState(1);
   const [scoutAssets, setScoutAssets] = useState([]);
@@ -178,16 +182,31 @@ export default function ScoutMarketplace() {
   };
 
   const handleBuy = async () => {
+    setIsTrading(true);
     try {
       const res = await buyAsset(selectedAsset.ticker, buyQty);
-      setSuccessMsg(res.message);
-      setSelectedAsset(null);
-      setTimeout(() => setSuccessMsg(null), 3000);
+      if (res.new_balance) updateBalance(res.new_balance);
+
+      const tradeValue = selectedAsset.price * buyQty;
+      const total = res.new_balance + tradeValue;
+      const pct = total > 0 ? (tradeValue / total) * 100 : 0;
+
+      const coachRes = await api.post('/coach/analyze', {
+        ticker: selectedAsset.ticker,
+        trade_action: 'buy',
+        percentage_of_portfolio: parseFloat(pct.toFixed(2)),
+        current_cash: res.new_balance
+      });
+
+      setCoachMessage(coachRes.data.coach_message);
+      setSelectedAsset(null); // Close scout modal
     } catch (err) {
       setCoachAlert({
         title: 'Trade Failed',
         message: err.response?.data?.detail || 'Could not complete the trade. Check your balance.',
       });
+    } finally {
+      setIsTrading(false);
     }
   };
 
@@ -199,6 +218,24 @@ export default function ScoutMarketplace() {
 
   return (
     <div className="p-6 md:ml-64 pb-24 md:pb-6 min-h-screen">
+      {/* ── AI COACH MODAL (SERGEANT) ── */}
+      {coachMessage && (
+        <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-[100] p-4">
+          <div className="bg-[#fad538] border-8 border-black shadow-[16px_16px_0px_0px_#000] max-w-xl w-full p-8" style={{ transform: 'rotate(-1deg)' }}>
+            <h2 className="text-4xl font-black uppercase tracking-tighter mb-2 border-b-8 border-black pb-2 text-black">The Sergeant Says:</h2>
+            <p className="text-2xl font-black leading-tight text-black mt-6 mb-8 uppercase">
+              "{coachMessage}"
+            </p>
+            <button 
+              onClick={() => setCoachMessage(null)}
+              className="w-full bg-black text-white font-black uppercase py-4 text-xl border-4 border-black shadow-[4px_4px_0px_0px_#fff] hover:translate-y-1 hover:translate-x-1 hover:shadow-none transition-all cursor-pointer"
+            >
+              DISMISS
+            </button>
+          </div>
+        </div>
+      )}
+
       {coachAlert && <CoachAlert title={coachAlert.title} message={coachAlert.message} onDismiss={() => setCoachAlert(null)} />}
 
       {/* Success toast */}
@@ -296,9 +333,10 @@ export default function ScoutMarketplace() {
               </div>
               <button
                 onClick={handleBuy}
-                className="w-full bg-[#b6353a] text-white border-4 border-black font-black uppercase py-4 shadow-[6px_6px_0px_0px_#000] hover:shadow-[8px_8px_0px_0px_#000] hover:-translate-y-1 active:shadow-none active:translate-y-1 transition-all cursor-pointer text-base"
+                disabled={isTrading}
+                className="w-full bg-[#b6353a] text-white border-4 border-black font-black uppercase py-4 shadow-[6px_6px_0px_0px_#000] hover:shadow-[8px_8px_0px_0px_#000] hover:-translate-y-1 active:shadow-none active:translate-y-1 transition-all cursor-pointer text-base disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                🏏 Scout Asset — Add to Playing XI
+                {isTrading ? 'Awaiting Comm...' : '🏏 Scout Asset — Add to Playing XI'}
               </button>
             </div>
           </div>
