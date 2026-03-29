@@ -2,7 +2,7 @@
 
 **TradeSquad** is a high-stakes, gamified stock trading simulator that turns market volatility into a social competition. Built for the modern trader, it combines real-time financial data with a "brutally honest" AI Coach that analyzes your portfolio and roasts your trading decisions in real-time.
 
-### 🔗 [Live Demo](https://heartfelt-naiad-e0446c.netlify.app/) | [Backend API Docs](https://tradesquad.onrender.com/docs)
+### 🔗 [Live Demo](https://tradesquad.netlify.app/) | [Backend API Docs](https://tradesquad.onrender.com/docs)
 
 ---
 
