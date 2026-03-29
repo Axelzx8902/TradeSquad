@@ -58,7 +58,7 @@ export default function AssetDetailPage() {
 
     const getCandleData = async () => {
       setCandleLoading(true);
-      const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+      const baseUrl = import.meta.env.VITE_API_BASE_URL ? `${import.meta.env.VITE_API_BASE_URL}/api` : 'http://127.0.0.1:8000/api';
       fetch(`${baseUrl}/v1/market/candles/${ticker}`)
         .then(r => r.json())
         .then(data => {

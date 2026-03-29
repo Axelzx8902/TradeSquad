@@ -55,7 +55,7 @@ export default function ScoutMarketplace() {
 
   // Step 1: always check market status on mount and when mode changes
   useEffect(() => {
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+    const baseUrl = import.meta.env.VITE_API_BASE_URL ? `${import.meta.env.VITE_API_BASE_URL}/api` : 'http://127.0.0.1:8000/api';
     fetch(`${baseUrl}/v1/market/status`)
       .then(r => r.json())
       .then(setMarketStatus)
@@ -64,7 +64,7 @@ export default function ScoutMarketplace() {
 
   // Step 2: wire data source based on mode
   useEffect(() => {
-    const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+    const baseUrl = import.meta.env.VITE_API_BASE_URL ? `${import.meta.env.VITE_API_BASE_URL}/api` : 'http://127.0.0.1:8000/api';
 
     if (isLiveMode) {
       // ─── LIVE MODE: REST call to yfinance endpoint ───────────────
@@ -159,7 +159,7 @@ export default function ScoutMarketplace() {
     // Fetch candle data for this ticker
     if (asset.ticker) {
       setCandleLoading(true);
-      const baseUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
+      const baseUrl = import.meta.env.VITE_API_BASE_URL ? `${import.meta.env.VITE_API_BASE_URL}/api` : 'http://127.0.0.1:8000/api';
       fetch(`${baseUrl}/v1/market/candles/${asset.ticker}`)
         .then(r => r.json())
         .then(data => {
